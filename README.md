@@ -184,6 +184,7 @@ Thank you to these developers for their amazing contributions please show some l
 
 If you want to support the development of Smart Lower Thirds and future OBS tools:
 
+**Lower Thirds Shop** https://ko-fi.com/mmltech/shop
 **Ko-fi:** https://ko-fi.com/mmltech  
 **PayPal:** https://paypal.me/mmlTools  
 
