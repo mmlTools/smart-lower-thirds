@@ -14,7 +14,7 @@
 ## 🚀 Overview  
 **Smart Lower Thirds** is a next-generation plugin for OBS Studio designed for creators who want **clean, dynamic, and professional broadcast graphics** without needing external tools or HTML editing.
 
-Whether you stream, present, teach, interview guests, or run live shows—this plugin gives you **total creative control** over your on-screen identity.
+Whether you stream, present, teach, interview guests, or run live shows this plugin gives you **total creative control** over your on-screen identity.
 
 ---
 
@@ -142,7 +142,7 @@ If you want **multiple lower thirds visible at the same time**, you must enable 
 
 ## 📚 Multiple Lower Thirds Per Scene  
 
-Yes—you can have **several** lower thirds active simultaneously:
+Yes you can have **several** lower thirds active simultaneously:
 - One for the host  
 - One for the guest  
 - One for the topic  
@@ -176,7 +176,7 @@ For smooth CSS animations
 For import/export template packaging  
 🔗 https://github.com/domoticz/minizip  
 
-Thank you to these developers for their amazing contributions—please show some love and leave a star on these repos.
+Thank you to these developers for their amazing contributions please show some love and leave a star on these repos.
 
 ---
 
