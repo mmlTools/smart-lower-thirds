@@ -29,8 +29,6 @@
 
 static QWidget *g_dockWidget = nullptr;
 
-// ------------------------------------------------------------
-
 LowerThirdDock::LowerThirdDock(QWidget *parent) : QWidget(parent)
 {
 	setObjectName(QStringLiteral("LowerThirdDock"));
@@ -93,10 +91,6 @@ LowerThirdDock::LowerThirdDock(QWidget *parent) : QWidget(parent)
 	rootLayout->setSpacing(6);
 
 	auto *st = style();
-
-	// ─────────────────────────────────────────────────────────────
-	// Row 1: Browse output folder + Add Browser Source (globe icon)
-	// ─────────────────────────────────────────────────────────────
 	{
 		auto *row = new QHBoxLayout();
 		row->setSpacing(6);
@@ -117,7 +111,6 @@ LowerThirdDock::LowerThirdDock(QWidget *parent) : QWidget(parent)
 		ensureSourceBtn->setToolTip(tr("Add Browser Source to current scene"));
 		ensureSourceBtn->setFlat(true);
 
-		// Web globe icon (theme) with fallback
 		QIcon globe = QIcon::fromTheme(QStringLiteral("internet-web-browser"));
 		if (globe.isNull())
 			globe = QIcon::fromTheme(QStringLiteral("applications-internet"));
@@ -138,9 +131,6 @@ LowerThirdDock::LowerThirdDock(QWidget *parent) : QWidget(parent)
 		connect(ensureSourceBtn, &QPushButton::clicked, this, &LowerThirdDock::onEnsureBrowserSourceClicked);
 	}
 
-	// ─────────────────────────────────────────────────────────────
-	// List (scroll area)
-	// ─────────────────────────────────────────────────────────────
 	scrollArea = new QScrollArea(this);
 	scrollArea->setObjectName(QStringLiteral("LowerThirdContent"));
 	scrollArea->setStyleSheet(QStringLiteral("#LowerThirdContent {"
@@ -161,9 +151,6 @@ LowerThirdDock::LowerThirdDock(QWidget *parent) : QWidget(parent)
 	scrollArea->setWidget(listContainer);
 	rootLayout->addWidget(scrollArea);
 
-	// ─────────────────────────────────────────────────────────────
-	// Bottom-right "+" Add button (below scroll area)
-	// ─────────────────────────────────────────────────────────────
 	{
 		auto *row = new QHBoxLayout();
 		row->setSpacing(6);
@@ -175,7 +162,6 @@ LowerThirdDock::LowerThirdDock(QWidget *parent) : QWidget(parent)
 		addBtn->setToolTip(tr("Add new lower third"));
 		addBtn->setFlat(true);
 
-		// "+" icon (theme) with fallbacks
 		QIcon plus = QIcon::fromTheme(QStringLiteral("list-add"));
 		if (plus.isNull())
 			plus = QIcon::fromTheme(QStringLiteral("add"));
@@ -189,10 +175,8 @@ LowerThirdDock::LowerThirdDock(QWidget *parent) : QWidget(parent)
 		connect(addBtn, &QPushButton::clicked, this, &LowerThirdDock::onAddLowerThird);
 	}
 
-	// Your existing widget carousel (Ko-fi/etc)
 	rootLayout->addWidget(create_widget_carousel(this));
 
-	// init button state + current path display
 	if (smart_lt::has_output_dir())
 		outputPathEdit->setText(QString::fromStdString(smart_lt::output_dir()));
 	else
@@ -210,7 +194,6 @@ bool LowerThirdDock::init()
 
 	rebuildList();
 
-	// Ensure baseline artifacts exist
 	if (smart_lt::has_output_dir())
 		smart_lt::ensure_output_artifacts_exist();
 
@@ -222,10 +205,6 @@ void LowerThirdDock::updateFromState()
 	updateRowActiveStyles();
 	updateCarouselActiveStyles();
 }
-
-// ------------------------------------------------------------
-// event filter: click row toggles checkbox (except buttons)
-// ------------------------------------------------------------
 
 bool LowerThirdDock::eventFilter(QObject *watched, QEvent *event)
 {
@@ -253,10 +232,6 @@ bool LowerThirdDock::eventFilter(QObject *watched, QEvent *event)
 
 	return QWidget::eventFilter(watched, event);
 }
-
-// ------------------------------------------------------------
-// shortcuts
-// ------------------------------------------------------------
 
 void LowerThirdDock::clearShortcuts()
 {
@@ -291,15 +266,10 @@ void LowerThirdDock::rebuildShortcuts()
 		const QString id = QString::fromStdString(cfg.id);
 
 		connect(sc, &QShortcut::activated, this, [this, id]() {
-			// Hotkeys toggle the item (and hide others for a broadcast-safe behavior)
 			handleToggleVisible(id, /*hideOthers*/ true);
 		});
 	}
 }
-
-// ------------------------------------------------------------
-// Carousel (optional; safe no-op if you keep it disabled)
-// ------------------------------------------------------------
 
 void LowerThirdDock::rebuildCarousel()
 {
@@ -377,10 +347,6 @@ void LowerThirdDock::updateCarouselActiveStyles()
 	}
 }
 
-// ------------------------------------------------------------
-// handlers
-// ------------------------------------------------------------
-
 void LowerThirdDock::onBrowseOutputFolder()
 {
 	const QString dir = QFileDialog::getExistingDirectory(this, tr("Select Output Folder"));
@@ -415,7 +381,6 @@ void LowerThirdDock::onEnsureBrowserSourceClicked()
 		return;
 	}
 
-	// Ensure artifacts exist (HTML may be missing)
 	smart_lt::ensure_output_artifacts_exist();
 
 	const std::string &htmlPath = smart_lt::index_html_path();
@@ -469,10 +434,6 @@ void LowerThirdDock::onEnsureBrowserSourceClicked()
 	obs_source_release(browser);
 	obs_source_release(curSceneSrc);
 }
-
-// ------------------------------------------------------------
-// list rendering
-// ------------------------------------------------------------
 
 void LowerThirdDock::rebuildList()
 {
@@ -619,10 +580,6 @@ void LowerThirdDock::updateRowActiveStyles()
 	}
 }
 
-// ------------------------------------------------------------
-// row actions
-// ------------------------------------------------------------
-
 void LowerThirdDock::handleToggleVisible(const QString &id, bool hideOthers)
 {
 	smart_lt::toggle_active(id.toStdString(), hideOthers);
@@ -660,10 +617,6 @@ void LowerThirdDock::handleRemove(const QString &id)
 	emit requestSave();
 }
 
-// ------------------------------------------------------------
-// Dock lifecycle wrappers
-// ------------------------------------------------------------
-
 void LowerThird_create_dock()
 {
 	if (g_dockWidget)
@@ -690,8 +643,6 @@ void LowerThird_destroy_dock()
 #if defined(HAVE_OBS_DOCK_BY_ID)
 	obs_frontend_remove_dock(sltDockId);
 #else
-	// NOTE: obs_frontend_remove_dock(QWidget*) is deprecated in some OBS versions.
-	// Prefer _by_id when available.
 	obs_frontend_remove_dock(g_dockWidget);
 #endif
 

@@ -38,10 +38,6 @@
 
 using namespace smart_lt;
 
-// -----------------------------------------------------------------------------
-// ZIP helpers
-// -----------------------------------------------------------------------------
-
 static bool unzip_to_dir(const QString &zipPath,
 			 const QString &destDir,
 			 QString &htmlPath,
@@ -140,10 +136,6 @@ static bool zip_write_file(zipFile zf, const char *internalName, const QByteArra
 	return true;
 }
 
-// -----------------------------------------------------------------------------
-// ctor/dtor
-// -----------------------------------------------------------------------------
-
 LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(parent)
 {
 	setWindowTitle(tr("Lower Third Settings"));
@@ -151,9 +143,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 
 	auto *root = new QVBoxLayout(this);
 
-	// ─────────────────────────────────────────────────────────────
-	// Content && Media
-	// ─────────────────────────────────────────────────────────────
 	{
 		auto *contentBox = new QGroupBox(tr("Content && Media"), this);
 		auto *contentLayout = new QGridLayout(contentBox);
@@ -195,9 +184,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		connect(browseProfilePictureBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onBrowseProfilePicture);
 	}
 
-	// ─────────────────────────────────────────────────────────────
-	// Style
-	// ─────────────────────────────────────────────────────────────
 	{
 		auto *styleBox = new QGroupBox(tr("Style"), this);
 		auto *styleGrid = new QGridLayout(styleBox);
@@ -267,9 +253,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		connect(ltPosCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LowerThirdSettingsDialog::onLtPosChanged);
 	}
 
-	// ─────────────────────────────────────────────────────────────
-	// Behavior
-	// ─────────────────────────────────────────────────────────────
 	{
 		auto *behaviorBox = new QGroupBox(tr("Behavior"), this);
 		auto *behaviorGrid = new QGridLayout(behaviorBox);
@@ -299,13 +282,9 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		});
 	}
 
-	// ─────────────────────────────────────────────────────────────
-	// Templates (HTML / CSS) with expand buttons
-	// ─────────────────────────────────────────────────────────────
 	{
 		auto *tplRow = new QHBoxLayout();
 
-		// HTML card
 		auto *htmlCard = new QGroupBox(tr("HTML Template"), this);
 		auto *htmlLayout = new QVBoxLayout(htmlCard);
 
@@ -327,7 +306,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 
 		tplRow->addWidget(htmlCard, 1);
 
-		// CSS card
 		auto *cssCard = new QGroupBox(tr("CSS Template"), this);
 		auto *cssLayout = new QVBoxLayout(cssCard);
 
@@ -352,9 +330,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		root->addLayout(tplRow, 1);
 	}
 
-	// ─────────────────────────────────────────────────────────────
-	// Bottom row: Import / Export + Save/Cancel
-	// ─────────────────────────────────────────────────────────────
 	{
 		buttonBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
 		auto *applyBtn = buttonBox->addButton(tr("Save && Apply"), QDialogButtonBox::AcceptRole);
@@ -386,9 +361,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		connect(exportBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onExportTemplateClicked);
 	}
 
-	// ─────────────────────────────────────────────────────────────
-	// bindings
-	// ─────────────────────────────────────────────────────────────
 	connect(animInCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LowerThirdSettingsDialog::onAnimInChanged);
 	connect(animOutCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LowerThirdSettingsDialog::onAnimOutChanged);
 
@@ -406,10 +378,6 @@ LowerThirdSettingsDialog::~LowerThirdSettingsDialog()
 	delete currentBgColor;
 	delete currentTextColor;
 }
-
-// -----------------------------------------------------------------------------
-// load/save
-// -----------------------------------------------------------------------------
 
 void LowerThirdSettingsDialog::setLowerThirdId(const QString &id)
 {
@@ -514,12 +482,10 @@ void LowerThirdSettingsDialog::saveToState()
 	cfg->html_template = htmlEdit->toPlainText().toStdString();
 	cfg->css_template = cssEdit->toPlainText().toStdString();
 
-	// profile picture copy into output_dir
 	if (!pendingProfilePicturePath.isEmpty() && smart_lt::has_output_dir()) {
 		const QString outDir = QString::fromStdString(smart_lt::output_dir());
 		QDir dir(outDir);
 
-		// remove old
 		if (!cfg->profile_picture.empty()) {
 			const QString oldPath = dir.filePath(QString::fromStdString(cfg->profile_picture));
 			if (QFile::exists(oldPath))
@@ -547,13 +513,8 @@ void LowerThirdSettingsDialog::saveToState()
 		pendingProfilePicturePath.clear();
 	}
 
-	// IMPORTANT: JsonOnly -> no rev bump / no forced refresh
 	smart_lt::apply_changes(smart_lt::ApplyMode::JsonOnly);
 }
-
-// -----------------------------------------------------------------------------
-// actions
-// -----------------------------------------------------------------------------
 
 void LowerThirdSettingsDialog::onPickBgColor()
 {
@@ -602,10 +563,6 @@ void LowerThirdSettingsDialog::onSaveAndApply()
 	accept();
 }
 
-// -----------------------------------------------------------------------------
-// import/export
-// -----------------------------------------------------------------------------
-
 void LowerThirdSettingsDialog::onExportTemplateClicked()
 {
 	if (currentId.isEmpty()) {
@@ -613,7 +570,6 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 		return;
 	}
 
-	// Ensure current edits are pushed into cfg before exporting
 	saveToState();
 
 	auto *cfg = smart_lt::get_by_id(currentId.toStdString());
@@ -637,7 +593,6 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 		return;
 	}
 
-	// template.json
 	QJsonObject obj;
 	obj["id"] = QString::fromStdString(cfg->id);
 	obj["title"] = QString::fromStdString(cfg->title);
@@ -662,7 +617,6 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 		return;
 	}
 
-	// template.html
 	const QByteArray htmlBytes = QString::fromStdString(cfg->html_template).toUtf8();
 	if (!zip_write_file(zf, "template.html", htmlBytes)) {
 		zipClose(zf, nullptr);
@@ -670,7 +624,6 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 		return;
 	}
 
-	// template.css
 	const QByteArray cssBytes = QString::fromStdString(cfg->css_template).toUtf8();
 	if (!zip_write_file(zf, "template.css", cssBytes)) {
 		zipClose(zf, nullptr);
@@ -678,7 +631,6 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 		return;
 	}
 
-	// profile picture (optional)
 	if (!cfg->profile_picture.empty() && smart_lt::has_output_dir()) {
 		const QString outDir = QString::fromStdString(smart_lt::output_dir());
 		QDir dir(outDir);
@@ -755,7 +707,6 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 
 	const QJsonObject obj = doc.object();
 
-	// Apply JSON fields (use currentId; do not replace cfg->id)
 	cfg->title = obj.value("title").toString().toStdString();
 	cfg->subtitle = obj.value("subtitle").toString().toStdString();
 	cfg->anim_in = obj.value("anim_in").toString().toStdString();
@@ -769,7 +720,6 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 	cfg->visible = obj.value("visible").toBool(false);
 	cfg->hotkey = obj.value("hotkey").toString().toStdString();
 
-	// Read template files
 	{
 		QFile f1(htmlPath);
 		if (f1.open(QIODevice::ReadOnly))
@@ -781,13 +731,11 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 			cfg->css_template = QString::fromUtf8(f2.readAll()).toStdString();
 	}
 
-	// Profile picture (optional): copy into output_dir
 	if (!profilePicPath.isEmpty() && smart_lt::has_output_dir()) {
 		const QString outDir = QString::fromStdString(smart_lt::output_dir());
 		if (!outDir.isEmpty()) {
 			QDir dir(outDir);
 
-			// remove old
 			if (!cfg->profile_picture.empty()) {
 				const QString oldPath = dir.filePath(QString::fromStdString(cfg->profile_picture));
 				if (QFile::exists(oldPath))
@@ -808,18 +756,10 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 		}
 	}
 
-	// Persist without rev bump / HTML refresh
 	smart_lt::apply_changes(smart_lt::ApplyMode::JsonOnly);
-
-	// Refresh dialog controls to reflect imported state
 	loadFromState();
-
 	QMessageBox::information(this, tr("Imported"), tr("Template imported successfully."));
 }
-
-// -----------------------------------------------------------------------------
-// editor dialogs
-// -----------------------------------------------------------------------------
 
 void LowerThirdSettingsDialog::openTemplateEditorDialog(const QString &title, QPlainTextEdit *sourceEdit)
 {
@@ -868,10 +808,6 @@ void LowerThirdSettingsDialog::onOpenCssEditorDialog()
 	openTemplateEditorDialog(tr("Edit CSS Template"), cssEdit);
 }
 
-// -----------------------------------------------------------------------------
-// change handlers
-// -----------------------------------------------------------------------------
-
 void LowerThirdSettingsDialog::updateCustomAnimFieldsVisibility()
 {
 	const QString customKey = QStringLiteral("custom");
@@ -897,12 +833,16 @@ void LowerThirdSettingsDialog::onAnimOutChanged(int)
 
 void LowerThirdSettingsDialog::onFontChanged(const QFont &)
 {
-	// persisted on Save
+	// Font change is persisted on Save; no immediate apply here.
+	// If you want immediate apply w/out rev bump, uncomment:
+	// saveToState();
 }
 
 void LowerThirdSettingsDialog::onHotkeyChanged(const QKeySequence &)
 {
-	// persisted on Save
+	// Hotkey change is persisted on Save; no immediate apply here.
+	// If you want immediate apply w/out rev bump, uncomment:
+	// saveToState();
 }
 
 void LowerThirdSettingsDialog::onLtPosChanged(int)
@@ -911,10 +851,6 @@ void LowerThirdSettingsDialog::onLtPosChanged(int)
 	// If you want immediate apply w/out rev bump, uncomment:
 	// saveToState();
 }
-
-// -----------------------------------------------------------------------------
-// helpers
-// -----------------------------------------------------------------------------
 
 void LowerThirdSettingsDialog::updateColorButton(QPushButton *btn, const QColor &color)
 {

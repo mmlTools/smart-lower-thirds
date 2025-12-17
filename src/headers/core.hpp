@@ -89,81 +89,46 @@ struct LowerThirdConfig {
 	std::string id;
 	std::string title;
 	std::string subtitle;
-
 	std::string anim_in;
 	std::string anim_out;
 	std::string custom_anim_in;
 	std::string custom_anim_out;
 	std::string lt_position;
-
 	std::string font_family;
-
-	// Stored as "#RRGGBB" or "#AARRGGBB"
 	std::string bg_color;
 	std::string text_color;
-
 	std::string html_template;
 	std::string css_template;
-
-	// Optional UI-only hint; used to create app-wide QShortcuts in the dock.
-	// Stored as QKeySequence::PortableText string.
 	std::string hotkey;
-
 	bool visible = false;
-
-	// File name stored relative to output_dir
 	std::string profile_picture;
 };
 
 namespace smart_lt {
 
-// Your workflow toggle
 enum class ApplyMode {
-	JsonOnly,       // minor changes only -> save JSON, do not bump rev
-	HtmlAndJsonRev, // major changes -> rev++, rewrite HTML (embedded HTML_REV), save JSON, reload sources
+	JsonOnly,
+	HtmlAndJsonRev,
 };
 
 void init_from_disk();
-
-// output directory
 void set_output_dir(const std::string &dir);
 bool has_output_dir();
 const std::string &output_dir();
-const std::string &index_html_path(); // absolute HTML path
-std::string state_json_path();        // absolute JSON path
-
-// Switch folder + load state if present + ensure artifacts + repoint managed browser sources.
-// Returns true if the folder exists and output_dir is usable.
+const std::string &index_html_path();
+std::string state_json_path();
 bool set_output_dir_and_load(const std::string &dir);
-
-// items
 std::vector<LowerThirdConfig> &all();
 LowerThirdConfig *get_by_id(const std::string &id);
-
-// CRUD (major)
 std::string add_default_lower_third();
 std::string clone_lower_third(const std::string &id);
 void remove_lower_third(const std::string &id);
-
-// visibility (minor)
 void toggle_active(const std::string &id, bool hideOthers = true);
 void set_active_exact(const std::string &id);
-
-// persistence
 bool load_state_json();
 bool save_state_json();
-
-// writes HTML using current g_rev (does NOT bump rev by itself)
 bool write_index_html();
-
-// single source of truth apply
 void apply_changes(ApplyMode mode);
-
-// Ensure JSON/HTML exist in output folder without bumping rev.
-// Returns true if it created/wrote anything.
 bool ensure_output_artifacts_exist();
-
-// browser source maintenance for managed sources
 void repoint_managed_browser_sources(bool reload);
-
 } // namespace smart_lt

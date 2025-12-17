@@ -21,24 +21,17 @@
 #include <QUrlQuery>
 #include <QVector>
 
-// Qt Network
 #include <QtNetwork/QNetworkAccessManager>
 #include <QtNetwork/QNetworkReply>
 #include <QtNetwork/QNetworkRequest>
 
-// -----------------------------------------------------------------------------
-// Endpoints (change these)
-// -----------------------------------------------------------------------------
-static const QString kBaseUrl = QStringLiteral("http://localhost:8080");
+static const QString kBaseUrl = QStringLiteral("https://obscountdown.com");
 static const QString kAdStyleEndpoint = kBaseUrl + QStringLiteral("/api/plugin/ads/slot");
 static const QString kAdClickEndpoint = kBaseUrl + QStringLiteral("/api/plugin/ads/click");
 static const QString kAdvertiseContactUrl = kBaseUrl + QStringLiteral("/advertise");
 static const QString kContactUrl = kBaseUrl + QStringLiteral("/contact");
 static const QString kAdSlotKey = QStringLiteral("plugin-ads");
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
 static QString jsonStr(const QJsonObject &o, const char *k, const QString &def = {})
 {
 	const auto v = o.value(QLatin1String(k));
@@ -54,7 +47,6 @@ static QString jsonStr(const QJsonObject &o, const QString &k, const QString &de
 static void apply_ad_style(QFrame *card, QLabel *icon, QLabel *title, QLabel *subtitle, QPushButton *cta,
 			   QLabel *sponsorLine, const QJsonObject &adStyle)
 {
-	// adStyle = the "ad" object from API
 	const QString gradientA = jsonStr(adStyle, "gradient_a", "#2a2d30");
 	const QString gradientB = jsonStr(adStyle, "gradient_b", "#1e2124");
 	const QString border = jsonStr(adStyle, "border", "rgba(255,255,255,0.16)");
@@ -106,9 +98,6 @@ static void apply_ad_style(QFrame *card, QLabel *icon, QLabel *title, QLabel *su
 				    .arg(border, gradientA, gradientB, text, muted, btnBorder, btnBg, btnHover));
 }
 
-// -----------------------------------------------------------------------------
-// Existing cards (unchanged)
-// -----------------------------------------------------------------------------
 QWidget *widget_create_kofi_card(QWidget *parent)
 {
 	auto *kofiCard = new QFrame(parent);
@@ -320,9 +309,6 @@ QWidget *widget_create_shopping_card(QWidget *parent)
 	return card;
 }
 
-// -----------------------------------------------------------------------------
-// NEW: “Advertise in this plugin” card (static)
-// -----------------------------------------------------------------------------
 QWidget *widget_create_advertise_card(QWidget *parent)
 {
 	auto *card = new QFrame(parent);
@@ -370,9 +356,6 @@ QWidget *widget_create_advertise_card(QWidget *parent)
 	return card;
 }
 
-// -----------------------------------------------------------------------------
-// NEW: “Show advertising” card (fetch style once; click logs + redirects)
-// -----------------------------------------------------------------------------
 QWidget *widget_create_show_advertise_card(QWidget *parent)
 {
 	auto *card = new QFrame(parent);
@@ -425,7 +408,6 @@ QWidget *widget_create_show_advertise_card(QWidget *parent)
 	root->addWidget(subtitle);
 	root->addLayout(btnRow);
 
-	// Default state
 	{
 		QJsonObject def;
 		def.insert(QStringLiteral("icon"), QStringLiteral("⭐"));
@@ -439,7 +421,6 @@ QWidget *widget_create_show_advertise_card(QWidget *parent)
 	card->setProperty("ad_click_url", QString());
 	card->setProperty("ad_loaded", false);
 
-	// Click: open tracking URL (server logs click + shows secure redirect page)
 	QObject::connect(cta, &QPushButton::clicked, card, [card]() {
 		const QString urlStr = card->property("ad_click_url").toString();
 		if (urlStr.isEmpty()) {
@@ -460,7 +441,6 @@ QWidget *widget_create_show_advertise_card(QWidget *parent)
 
 		auto *nam = new QNetworkAccessManager(card);
 
-		// Build: /api/plugin/ads/slot?key=plugin-ads
 		QUrl styleUrl(kAdStyleEndpoint);
 		{
 			QUrlQuery q(styleUrl);
@@ -555,13 +535,8 @@ QWidget *widget_create_show_advertise_card(QWidget *parent)
 					return;
 				}
 
-				// Apply style from "ad"
 				apply_ad_style(card, icon, title, subtitle, cta, sponsorLine, adObj);
 
-				// Click URL priority:
-				// 1) click_url from API (root)
-				// 2) build fallback using slot/ad guids
-				// 3) advertise page
 				QString finalClickUrl = clickUrlFromApi;
 
 				if (finalClickUrl.isEmpty()) {
@@ -572,7 +547,6 @@ QWidget *widget_create_show_advertise_card(QWidget *parent)
 						QUrl u(kAdClickEndpoint);
 						QUrlQuery q(u);
 
-						// The backend can accept either slot guid or slot key; we pass both safely.
 						q.addQueryItem(QStringLiteral("key"), kAdSlotKey);
 						if (!slotGuid.isEmpty())
 							q.addQueryItem(QStringLiteral("slot"), slotGuid);
@@ -594,9 +568,6 @@ QWidget *widget_create_show_advertise_card(QWidget *parent)
 	return card;
 }
 
-// -----------------------------------------------------------------------------
-// Carousel (UPDATED): now includes ad cards
-// -----------------------------------------------------------------------------
 QWidget *create_widget_carousel(QWidget *parent)
 {
 	auto *wrapper = new QWidget(parent);

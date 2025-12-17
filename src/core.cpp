@@ -1,4 +1,3 @@
-// core.cpp
 #define LOG_TAG "[" PLUGIN_NAME "][core]"
 #include "core.hpp"
 
@@ -22,22 +21,11 @@
 
 namespace smart_lt {
 
-// -----------------------------------------------------------------------------
-// Globals
-// -----------------------------------------------------------------------------
-
 static std::vector<LowerThirdConfig> g_items;
-static std::string g_output_dir;      // user resources folder
-static std::string g_index_html_path; // absolute
-static std::string g_global_cfg_path; // module config json (stores last output_dir)
-
-// IMPORTANT: This rev is now a "STRUCTURAL" rev.
-// It MUST bump only on: add/remove/output-dir-path-change.
+static std::string g_output_dir;
+static std::string g_index_html_path;
+static std::string g_global_cfg_path;
 static uint64_t g_rev = 1;
-
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
 
 static std::string module_config_path_cached()
 {
@@ -156,7 +144,6 @@ static std::string replace_all(std::string text, const std::string &from, const 
 
 static std::string css_from_stored_color(const std::string &stored)
 {
-	// "#AARRGGBB" -> rgba(r,g,b,a)
 	if (stored.size() == 9 && stored[0] == '#') {
 		auto hexByte = [&](int idx) -> int {
 			char buf[3] = {stored[idx], stored[idx + 1], 0};
@@ -177,10 +164,9 @@ static std::string css_from_stored_color(const std::string &stored)
 		return out;
 	}
 
-	return stored; // "#RRGGBB"
+	return stored;
 }
 
-// Structural rev bump (ONLY call from: add/remove/output-dir-path-change)
 static void bump_struct_rev()
 {
 	if (g_rev == 0)
@@ -188,10 +174,6 @@ static void bump_struct_rev()
 	else
 		++g_rev;
 }
-
-// -----------------------------------------------------------------------------
-// Public paths
-// -----------------------------------------------------------------------------
 
 void set_output_dir(const std::string &dir)
 {
@@ -227,10 +209,6 @@ std::string state_json_path()
 	p += "smart-lower-thirds-state.json";
 	return p;
 }
-
-// -----------------------------------------------------------------------------
-// Default config
-// -----------------------------------------------------------------------------
 
 static std::string make_new_id()
 {
@@ -310,10 +288,6 @@ static LowerThirdConfig make_default_cfg()
 	return cfg;
 }
 
-// -----------------------------------------------------------------------------
-// State access
-// -----------------------------------------------------------------------------
-
 std::vector<LowerThirdConfig> &all()
 {
 	return g_items;
@@ -327,10 +301,6 @@ LowerThirdConfig *get_by_id(const std::string &id)
 	}
 	return nullptr;
 }
-
-// -----------------------------------------------------------------------------
-// JSON persistence (rev is authoritative, but "structural" only)
-// -----------------------------------------------------------------------------
 
 static QJsonObject cfg_to_json(const LowerThirdConfig &cfg)
 {
@@ -462,7 +432,6 @@ bool load_state_json()
 			cfg.hotkey = o.value("hotkey").toString().toStdString();
 			cfg.profile_picture = o.value("profile_picture").toString().toStdString();
 
-			// defaults safety
 			if (cfg.lt_position.empty())
 				cfg.lt_position = "lt-pos-bottom-left";
 			if (cfg.anim_in.empty())
@@ -484,10 +453,6 @@ bool load_state_json()
 	LOGI("Loaded '%s' (%zu items, rev=%llu)", path.toUtf8().constData(), g_items.size(), (unsigned long long)g_rev);
 	return true;
 }
-
-// -----------------------------------------------------------------------------
-// Browser source repoint (managed only)
-// -----------------------------------------------------------------------------
 
 static bool slt_is_browser_source(obs_source_t *src)
 {
@@ -569,10 +534,6 @@ void repoint_managed_browser_sources(bool reload)
 	LOGI("Repoint managed browser sources: updated=%zu visited=%zu html='%s'", updated, visited, htmlPath.c_str());
 }
 
-// -----------------------------------------------------------------------------
-// HTML writer (STATIC shell + JS renderer; NEVER forces reload)
-// -----------------------------------------------------------------------------
-
 bool write_index_html()
 {
 	if (!has_output_dir()) {
@@ -607,7 +568,6 @@ bool write_index_html()
 	html += "<style id=\"slt-dynamic-style\"></style>\n";
 	html += "</head>\n<body>\n<ul id=\"lower-thirds-root\"></ul>\n";
 
-	// Build list of known animate.css classes to remove
 	std::string jsAllAnims = "  const ALL_ANIMS=[";
 	bool first = true;
 	auto append = [&](const char *cls) {
@@ -628,13 +588,8 @@ bool write_index_html()
 			append(opt.value);
 	jsAllAnims += "];\n";
 
-	// JS renderer:
-	// - placeholder replacement
-	// - DOM diff for add/remove
-	// - CSS diff (single style tag)
-	// - animations for visibility diff
 	html += "<script>\n(function(){\n";
-	html += "  const HTML_REV=" + std::to_string(g_rev) + ";\n"; // informational; no hard reload logic
+	html += "  const HTML_REV=" + std::to_string(g_rev) + ";\n";
 	html += "  const ROOT=document.getElementById('lower-thirds-root');\n";
 	html += "  const STYLE=document.getElementById('slt-dynamic-style');\n";
 	html += jsAllAnims;
@@ -651,8 +606,6 @@ bool write_index_html()
 	html += "    return s;\n";
 	html += "  }\n";
 	html += "  function normColor(c){ return safeStr(c); }\n";
-
-	// Build/Update one item node from template
 	html += "  function renderItem(it){\n";
 	html += "    const id=safeStr(it.id);\n";
 	html += "    if(!id) return;\n";
@@ -695,8 +648,6 @@ bool write_index_html()
 	html += "      prev.sig=sig;\n";
 	html += "    }\n";
 	html += "  }\n";
-
-	// Build CSS once from items (with placeholder replacement)
 	html += "  function buildCss(items){\n";
 	html += "    let css='';\n";
 	html += "    for(const it of items){\n";
@@ -718,8 +669,6 @@ bool write_index_html()
 	html += "    }\n";
 	html += "    return css;\n";
 	html += "  }\n";
-
-	// Visibility animations (same idea as before, but uses current DOM map)
 	html += "  function applyVisibility(items){\n";
 	html += "    const visible=new Set();\n";
 	html += "    const anim={};\n";
@@ -749,8 +698,6 @@ bool write_index_html()
 	html += "    }\n";
 	html += "    lastVisible.clear(); visible.forEach(id=>lastVisible.add(id));\n";
 	html += "  }\n";
-
-	// Main tick: diff items (add/remove/rebuild), rebuild CSS when needed, apply visibility
 	html += "  function sync(items){\n";
 	html += "    const seen=new Set();\n";
 	html += "    for(const it of items){ const id=safeStr(it.id); if(!id) continue; seen.add(id); renderItem(it); }\n";
@@ -773,7 +720,6 @@ bool write_index_html()
 	html += "    }\n";
 	html += "    applyVisibility(items);\n";
 	html += "  }\n";
-
 	html += "  async function tick(){\n";
 	html += "    try{\n";
 	html += "      const res=await fetch('smart-lower-thirds-state.json?ts='+Date.now(), {cache:'no-store'});\n";
@@ -814,10 +760,6 @@ bool write_index_html()
 	return true;
 }
 
-// -----------------------------------------------------------------------------
-// Ensure artifacts exist (no rev bump)
-// -----------------------------------------------------------------------------
-
 bool ensure_output_artifacts_exist()
 {
 	if (!has_output_dir())
@@ -850,29 +792,16 @@ bool ensure_output_artifacts_exist()
 	return changed;
 }
 
-// -----------------------------------------------------------------------------
-// Apply
-// -----------------------------------------------------------------------------
-
 void apply_changes(ApplyMode mode)
 {
 	if (!has_output_dir())
 		return;
 
-	// We intentionally do NOT bump g_rev here anymore.
-	// g_rev is structural-only and is managed by add/remove/output-dir-change.
 	(void)mode;
 
-	// Ensure HTML exists (shell renderer). Do not rewrite constantly.
 	ensure_output_artifacts_exist();
-
-	// Save JSON (this is how the browser updates live).
 	save_state_json();
 }
-
-// -----------------------------------------------------------------------------
-// CRUD (STRUCTURAL -> rev bump)
-// -----------------------------------------------------------------------------
 
 std::string add_default_lower_third()
 {
@@ -915,10 +844,6 @@ void remove_lower_third(const std::string &id)
 		apply_changes(ApplyMode::JsonOnly);
 	}
 }
-
-// -----------------------------------------------------------------------------
-// Visibility (minor -> json only)
-// -----------------------------------------------------------------------------
 
 void toggle_active(const std::string &id, bool hideOthers)
 {
@@ -990,10 +915,6 @@ void set_active_exact(const std::string &id)
 	apply_changes(ApplyMode::JsonOnly);
 }
 
-// -----------------------------------------------------------------------------
-// Output dir switching (STRUCTURAL on path change -> bump rev)
-// -----------------------------------------------------------------------------
-
 bool set_output_dir_and_load(const std::string &dir)
 {
 	if (dir.empty())
@@ -1011,7 +932,6 @@ bool set_output_dir_and_load(const std::string &dir)
 		return false;
 	}
 
-	// If JSON exists: load it. Otherwise seed defaults.
 	const QString jsonPath = QString::fromStdString(state_json_path());
 	if (QFileInfo::exists(jsonPath)) {
 		load_state_json();
@@ -1022,16 +942,13 @@ bool set_output_dir_and_load(const std::string &dir)
 		save_state_json();
 	}
 
-	// Ensure HTML exists (do not bump rev)
 	ensure_output_artifacts_exist();
 
-	// If path changed, bump structural rev and save JSON (per your requirement).
 	if (!sameDir) {
 		bump_struct_rev();
 		save_state_json();
 	}
 
-	// Repoint managed sources. Reload only if the dir actually changed.
 	repoint_managed_browser_sources(/*reload*/ !sameDir);
 
 	LOGI("Folder active: '%s' (rev=%llu, items=%zu)", g_output_dir.c_str(), (unsigned long long)g_rev,
@@ -1039,10 +956,6 @@ bool set_output_dir_and_load(const std::string &dir)
 
 	return true;
 }
-
-// -----------------------------------------------------------------------------
-// init (on OBS load)
-// -----------------------------------------------------------------------------
 
 void init_from_disk()
 {
