@@ -580,11 +580,11 @@ QWidget *create_widget_carousel(QWidget *parent)
 	auto *stack = new QStackedWidget(wrapper);
 	stack->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
-	stack->addWidget(widget_create_show_advertise_card(stack));
+	//stack->addWidget(widget_create_show_advertise_card(stack));
 	stack->addWidget(widget_create_shopping_card(stack));
 	stack->addWidget(widget_create_discord_card(stack));
 	stack->addWidget(widget_create_kofi_card(stack));
-	stack->addWidget(widget_create_advertise_card(stack));
+	//stack->addWidget(widget_create_advertise_card(stack));
 
 	root->addWidget(stack);
 

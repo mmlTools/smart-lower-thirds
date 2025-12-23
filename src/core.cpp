@@ -266,24 +266,130 @@ static LowerThirdConfig make_default_cfg()
 		"</li>\n";
 
 	cfg.css_template =
-		"#{{ID}} .slt-card{position:relative;display:inline-block;border-radius:14px;overflow:hidden;"
-		"box-shadow:0 14px 40px rgba(0,0,0,0.35);transform:translateZ(0);} \n"
-		"#{{ID}} .slt-accent{position:absolute;inset:0 auto 0 0;width:6px;"
-		"background:linear-gradient(180deg,rgba(59,130,246,1),rgba(34,197,94,1));opacity:.95;} \n"
-		"#{{ID}} .slt-body{display:inline-flex;align-items:center;gap:12px;padding:14px 18px 14px 14px;"
-		"background:rgba(0,0,0,0.25);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);"
-		"border:1px solid rgba(255,255,255,0.16);border-left:none;} \n"
-		"#{{ID}} .slt-body{background-color:{{BG_COLOR}};color:{{TEXT_COLOR}};} \n"
-		"#{{ID}} .slt-avatar-wrap{width:44px;height:44px;border-radius:999px;overflow:hidden;"
-		"border:2px solid rgba(255,255,255,0.22);flex:0 0 auto;} \n"
+		"#{{ID}}{"
+		"--slt-radius:22px;"
+		"--slt-pad-y:22px;"
+		"--slt-pad-x:28px;"
+		"--slt-gap:18px;"
+		"--slt-accent-w:10px;"
+		"--slt-avatar:112px;"
+		"--slt-title:56px;"
+		"--slt-subtitle:34px;"
+		"--slt-border:rgba(255,255,255,0.18);"
+		"--slt-border-soft:rgba(255,255,255,0.10);"
+		"--slt-shadow:0 22px 70px rgba(0,0,0,0.45);"
+		"-webkit-font-smoothing:antialiased;"
+		"-moz-osx-font-smoothing:grayscale;"
+		"} \n"
+
+		"#{{ID}} .slt-card{"
+		"position:relative;"
+		"display:inline-block;"
+		"border-radius:var(--slt-radius);"
+		"overflow:hidden;"
+		"box-shadow:var(--slt-shadow);"
+		"transform:translateZ(0);"
+		"isolation:isolate;"
+		"} \n"
+
+		"#{{ID}} .slt-accent{"
+		"position:absolute;"
+		"inset:0 auto 0 0;"
+		"width:var(--slt-accent-w);"
+		"opacity:.98;"
+		"background:linear-gradient(180deg,rgba(96,165,250,1) 0%,rgba(34,197,94,1) 55%,rgba(16,185,129,1) 100%);"
+		"box-shadow:0 0 0 1px rgba(255,255,255,0.10) inset,0 10px 30px rgba(0,0,0,0.28);"
+		"} \n"
+
+		"#{{ID}} .slt-body{"
+		"position:relative;"
+		"display:flex;"
+		"align-items:center;"
+		"gap:var(--slt-gap);"
+		"padding:var(--slt-pad-y) var(--slt-pad-x) var(--slt-pad-y) calc(var(--slt-pad-x) + 6px);"
+		"background-color:{{BG_COLOR}};"
+		"color:{{TEXT_COLOR}};"
+		"border:1px solid var(--slt-border);"
+		"border-left:none;"
+		"backdrop-filter:blur(14px);"
+		"-webkit-backdrop-filter:blur(14px);"
+		"box-shadow:0 0 0 1px var(--slt-border-soft) inset,0 18px 45px rgba(0,0,0,0.25);"
+		"} \n"
+
+		"#{{ID}} .slt-body::before{"
+		"content:'';"
+		"position:absolute;"
+		"inset:0;"
+		"pointer-events:none;"
+		"background:radial-gradient(120% 140% at 0% 0%,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0.06) 35%,rgba(255,255,255,0.00) 70%);"
+		"mix-blend-mode:overlay;"
+		"opacity:.85;"
+		"} \n"
+
+		"#{{ID}} .slt-avatar-wrap{"
+		"width:var(--slt-avatar);"
+		"height:var(--slt-avatar);"
+		"border-radius:999px;"
+		"overflow:hidden;"
+		"flex:0 0 auto;"
+		"position:relative;"
+		"border:2px solid rgba(255,255,255,0.22);"
+		"box-shadow:0 12px 28px rgba(0,0,0,0.35),0 0 0 1px rgba(0,0,0,0.25) inset;"
+		"} \n"
+
+		"#{{ID}} .slt-avatar-wrap::after{"
+		"content:'';"
+		"position:absolute;"
+		"inset:0;"
+		"pointer-events:none;"
+		"background:radial-gradient(120% 120% at 30% 20%,rgba(255,255,255,0.22) 0%,rgba(255,255,255,0.00) 55%);"
+		"opacity:.9;"
+		"} \n"
+
 		"#{{ID}} .slt-avatar-wrap[data-has-avatar=\"0\"]{display:none;} \n"
-		"#{{ID}} .slt-avatar{width:100%;height:100%;object-fit:cover;display:block;} \n"
-		"#{{ID}} .slt-text{display:flex;flex-direction:column;gap:2px;} \n"
-		"#{{ID}} .slt-title{font-family:{{FONT_FAMILY}},system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
-		"font-size:28px;font-weight:800;letter-spacing:.2px;line-height:1.05;"
-		"text-shadow:0 2px 10px rgba(0,0,0,0.28);} \n"
-		"#{{ID}} .slt-subtitle{font-family:{{FONT_FAMILY}},system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
-		"font-size:16px;font-weight:500;opacity:.9;letter-spacing:.25px;} \n";
+
+		"#{{ID}} .slt-avatar{"
+		"width:100%;"
+		"height:100%;"
+		"object-fit:cover;"
+		"display:block;"
+		"} \n"
+
+		"#{{ID}} .slt-text{"
+		"display:flex;"
+		"flex-direction:column;"
+		"gap:8px;"
+		"min-width:0;"
+		"} \n"
+
+		"#{{ID}} .slt-title{"
+		"font-family:{{FONT_FAMILY}},system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
+		"font-size:var(--slt-title);"
+		"font-weight:900;"
+		"letter-spacing:.2px;"
+		"line-height:1.05;"
+		"margin:0;"
+		"text-shadow:0 2px 14px rgba(0,0,0,0.35),0 1px 0 rgba(0,0,0,0.15);"
+		"white-space:nowrap;"
+		"overflow:hidden;"
+		"text-overflow:ellipsis;"
+		"} \n"
+
+		"#{{ID}} .slt-subtitle{"
+		"font-family:{{FONT_FAMILY}},system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
+		"font-size:var(--slt-subtitle);"
+		"font-weight:600;"
+		"opacity:.92;"
+		"letter-spacing:.25px;"
+		"line-height:1.15;"
+		"margin:0;"
+		"text-shadow:0 1px 10px rgba(0,0,0,0.28);"
+		"white-space:nowrap;"
+		"overflow:hidden;"
+		"text-overflow:ellipsis;"
+		"} \n"
+
+		"#{{ID}} .slt-avatar-wrap[data-has-avatar=\"0\"] + .slt-text{padding-left:4px;} \n";
 
 	return cfg;
 }
@@ -549,7 +655,7 @@ bool write_index_html()
 	}
 
 	std::string html;
-	html.reserve(26000);
+	html.reserve(30000);
 
 	html += "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n";
 	html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n";
@@ -596,7 +702,21 @@ bool write_index_html()
 	html += "  const byId=new Map();\n";
 	html += "  const lastVisible=new Set();\n";
 	html += "  let lastCssSig='';\n";
-	html += "  function clearAnim(li){ ALL_ANIMS.forEach(a=>li.classList.remove(a)); }\n";
+	html += "  const animSeq=new Map();\n";
+	html += "  const endHandlers=new Map();\n";
+	html += "  function bumpSeq(id){ const n=(animSeq.get(id)||0)+1; animSeq.set(id,n); return n; }\n";
+	html += "  function removeEndHandler(id, li){\n";
+	html += "    const h=endHandlers.get(id);\n";
+	html += "    if(h && li){ li.removeEventListener('animationend', h); li.removeEventListener('animationcancel', h); }\n";
+	html += "    endHandlers.delete(id);\n";
+	html += "  }\n";
+	html += "  function restartAnim(li){ if(!li) return; void li.offsetHeight; }\n";
+	html += "  function clearAnim(li){\n";
+	html += "    if(!li) return;\n";
+	html += "    ALL_ANIMS.forEach(a=>li.classList.remove(a));\n";
+	html += "    const last=li.dataset.sltLastAnim||'';\n";
+	html += "    if(last){ li.classList.remove(last); li.dataset.sltLastAnim=''; }\n";
+	html += "  }\n";
 	html += "  function effectiveIn(it){ return (it.anim_in==='custom') ? (it.custom_anim_in||'') : (it.anim_in||''); }\n";
 	html += "  function effectiveOut(it){ return (it.anim_out==='custom') ? (it.custom_anim_out||'') : (it.anim_out||''); }\n";
 	html += "  function safeStr(v){ return (v===null||v===undefined) ? '' : String(v); }\n";
@@ -643,6 +763,8 @@ bool write_index_html()
 	html += "      if(!li) return;\n";
 	html += "      li.style.opacity = old.style.opacity || '0';\n";
 	html += "      li.style.pointerEvents = old.style.pointerEvents || 'none';\n";
+	html += "      // Preserve last anim tracking across rerender (so clearAnim can remove custom class too)\n";
+	html += "      li.dataset.sltLastAnim = old.dataset.sltLastAnim || '';\n";
 	html += "      old.replaceWith(li);\n";
 	html += "      prev.li=li;\n";
 	html += "      prev.sig=sig;\n";
@@ -683,21 +805,50 @@ bool write_index_html()
 	html += "    for(const id of toHide){\n";
 	html += "      const rec=byId.get(id); if(!rec||!rec.li) continue;\n";
 	html += "      const li=rec.li;\n";
+	html += "      const seq=bumpSeq(id);\n";
+	html += "      removeEndHandler(id, li);\n";
 	html += "      const out=(anim[id]&&anim[id].out) ? anim[id].out : 'animate__fadeOut';\n";
-	html += "      clearAnim(li); li.style.pointerEvents='none'; li.style.opacity='1';\n";
-	html += "      if(out) li.classList.add(out);\n";
-	html += "      const handler=()=>{ li.removeEventListener('animationend', handler); clearAnim(li); li.style.opacity='0'; };\n";
+	html += "      clearAnim(li);\n";
+	html += "      li.style.pointerEvents='none';\n";
+	html += "      li.style.opacity='1';\n";
+	html += "      if(out){\n";
+	html += "        restartAnim(li);\n";
+	html += "        li.classList.add(out);\n";
+	html += "        li.dataset.sltLastAnim=out;\n";
+	html += "      }\n";
+	html += "      const handler=()=>{\n";
+	html += "        // Stale handler guard: only apply if this is still the latest operation for this id\n";
+	html += "        if((animSeq.get(id)||0)!==seq) return;\n";
+	html += "        clearAnim(li);\n";
+	html += "        li.style.opacity='0';\n";
+	html += "        removeEndHandler(id, li);\n";
+	html += "      };\n";
+	html += "      endHandlers.set(id, handler);\n";
 	html += "      li.addEventListener('animationend', handler);\n";
+	html += "      li.addEventListener('animationcancel', handler);\n";
 	html += "    }\n";
+
+	// Then show
 	html += "    for(const id of toShow){\n";
 	html += "      const rec=byId.get(id); if(!rec||!rec.li) continue;\n";
 	html += "      const li=rec.li;\n";
+	html += "      // invalidate any pending hide completion\n";
+	html += "      bumpSeq(id);\n";
+	html += "      removeEndHandler(id, li);\n";
 	html += "      const inn=(anim[id]&&anim[id].in) ? anim[id].in : 'animate__fadeIn';\n";
-	html += "      clearAnim(li); li.style.opacity='1'; li.style.pointerEvents='auto';\n";
-	html += "      if(inn) li.classList.add(inn);\n";
+	html += "      clearAnim(li);\n";
+	html += "      li.style.opacity='1';\n";
+	html += "      li.style.pointerEvents='auto';\n";
+	html += "      if(inn){\n";
+	html += "        restartAnim(li);\n";
+	html += "        li.classList.add(inn);\n";
+	html += "        li.dataset.sltLastAnim=inn;\n";
+	html += "      }\n";
 	html += "    }\n";
+
 	html += "    lastVisible.clear(); visible.forEach(id=>lastVisible.add(id));\n";
 	html += "  }\n";
+
 	html += "  function sync(items){\n";
 	html += "    const seen=new Set();\n";
 	html += "    for(const it of items){ const id=safeStr(it.id); if(!id) continue; seen.add(id); renderItem(it); }\n";
@@ -707,6 +858,8 @@ bool write_index_html()
 	html += "        if(rec && rec.li) rec.li.remove();\n";
 	html += "        byId.delete(id);\n";
 	html += "        lastVisible.delete(id);\n";
+	html += "        animSeq.delete(id);\n";
+	html += "        endHandlers.delete(id);\n";
 	html += "      }\n";
 	html += "    }\n";
 	html += "    // css signature\n";
@@ -720,6 +873,7 @@ bool write_index_html()
 	html += "    }\n";
 	html += "    applyVisibility(items);\n";
 	html += "  }\n";
+
 	html += "  async function tick(){\n";
 	html += "    try{\n";
 	html += "      const res=await fetch('smart-lower-thirds-state.json?ts='+Date.now(), {cache:'no-store'});\n";
