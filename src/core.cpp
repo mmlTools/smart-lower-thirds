@@ -1,1128 +1,1098 @@
+// core.cpp
 #define LOG_TAG "[" PLUGIN_NAME "][core]"
 #include "core.hpp"
 
-#include <obs-frontend-api.h>
-#include <util/platform.h>
-
 #include <algorithm>
-#include <cstdio>
-#include <cstring>
-#include <tuple>
+#include <sstream>
+#include <random>
 
-#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
+#include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSaveFile>
-#include <QString>
+#include <QJsonArray>
+
+#include <obs-frontend-api.h>
 
 namespace smart_lt {
 
-static std::vector<LowerThirdConfig> g_items;
 static std::string g_output_dir;
-static std::string g_index_html_path;
-static std::string g_global_cfg_path;
-static uint64_t g_rev = 1;
+static std::vector<lower_third_cfg> g_items;
+static std::vector<std::string> g_visible;
+static std::string g_last_html_path;
 
+// -------------------------
+// Helpers
+// -------------------------
+static std::string join_path(const std::string &a, const std::string &b)
+{
+    QDir d(QString::fromStdString(a));
+    return d.filePath(QString::fromStdString(b)).toStdString();
+}
+
+static bool write_text_file(const std::string &path, const std::string &data)
+{
+    QFile f(QString::fromStdString(path));
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    f.write(data.data(), (qint64)data.size());
+    f.close();
+    return true;
+}
+
+static std::string read_text_file(const std::string &path)
+{
+    QFile f(QString::fromStdString(path));
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+    const QByteArray b = f.readAll();
+    f.close();
+    return std::string(b.constData(), (size_t)b.size());
+}
+
+static void ensure_dir(const std::string &dir)
+{
+    QDir().mkpath(QString::fromStdString(dir));
+}
+
+static std::string sanitize_id(const std::string &s)
+{
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '_' || c == '-') {
+            out.push_back(c);
+        }
+    }
+    if (out.empty())
+        out = "lt_" + now_timestamp_string();
+    return out;
+}
+
+static std::string replace_all(std::string s, const std::string &from, const std::string &to)
+{
+    if (from.empty())
+        return s;
+    size_t pos = 0;
+    while ((pos = s.find(from, pos)) != std::string::npos) {
+        s.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+    return s;
+}
+
+static void delete_old_lt_html_keep(const std::string &keepAbsPath)
+{
+    if (!has_output_dir())
+        return;
+
+    QDir d(QString::fromStdString(output_dir()));
+    const QFileInfo keepFi(QString::fromStdString(keepAbsPath));
+    const QString keepName = keepFi.fileName();
+
+    const QStringList list = d.entryList(QStringList() << "lt-*.html", QDir::Files, QDir::Time);
+    for (const QString &fn : list) {
+        if (!keepName.isEmpty() && fn == keepName)
+            continue;
+        d.remove(fn);
+    }
+}
+
+// -------------------------
+// OBS module config.json (output_dir)
+// -------------------------
 static std::string module_config_path_cached()
 {
-	if (!g_global_cfg_path.empty())
-		return g_global_cfg_path;
+    static std::string cached;
+    static bool inited = false;
+    if (inited)
+        return cached;
 
-	char *p = obs_module_config_path("config.json");
-	if (!p) {
-		LOGW("obs_module_config_path returned null for config.json");
-		return {};
-	}
+    inited = true;
 
-	g_global_cfg_path = p;
-	bfree(p);
+    char *p = obs_module_config_path("config.json"); // <- YOU REQUESTED THIS FORMAT
+    if (!p)
+        return cached;
 
-	LOGD("Global config path: '%s'", g_global_cfg_path.c_str());
-	return g_global_cfg_path;
-}
-
-static void update_index_path_from_output_dir()
-{
-	g_index_html_path.clear();
-	if (g_output_dir.empty())
-		return;
-
-	std::string p = g_output_dir;
-	const char last = p.back();
-	if (last != '/' && last != '\\')
-		p += '/';
-
-	p += "smart-lower-thirds.html";
-	g_index_html_path = p;
-}
-
-static bool qt_write_file_atomic(const QString &path, const QByteArray &bytes, bool allowMkPath)
-{
-	const QFileInfo fi(path);
-	if (allowMkPath) {
-		QDir().mkpath(fi.absolutePath());
-	} else {
-		if (!fi.dir().exists())
-			return false;
-	}
-
-	QSaveFile f(path);
-	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-		return false;
-
-	if (f.write(bytes) != bytes.size())
-		return false;
-
-	return f.commit();
-}
-
-static void save_global_config()
-{
-	const std::string pathS = module_config_path_cached();
-	if (pathS.empty())
-		return;
-
-	QJsonObject root;
-	root["output_dir"] = QString::fromStdString(g_output_dir);
-
-	const QJsonDocument doc(root);
-	const QByteArray bytes = doc.toJson(QJsonDocument::Compact);
-
-	const QString path = QString::fromStdString(pathS);
-	if (!qt_write_file_atomic(path, bytes, /*allowMkPath*/ true)) {
-		LOGW("Failed to save global config '%s'", path.toUtf8().constData());
-		return;
-	}
-
-	LOGD("Saved global config '%s' (output_dir='%s')", path.toUtf8().constData(), g_output_dir.c_str());
+    cached = p;
+    bfree(p);
+    return cached;
 }
 
 static void load_global_config()
 {
-	const std::string pathS = module_config_path_cached();
-	if (pathS.empty())
-		return;
+    const std::string pathS = module_config_path_cached();
+    if (pathS.empty())
+        return;
 
-	const QString path = QString::fromStdString(pathS);
-	QFile f(path);
-	if (!f.exists() || !f.open(QIODevice::ReadOnly)) {
-		LOGD("No global config at '%s' (first run ok)", path.toUtf8().constData());
-		return;
-	}
+    const QString path = QString::fromStdString(pathS);
+    QFile f(path);
 
-	const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-	if (!doc.isObject())
-		return;
+    if (!f.exists() || !f.open(QIODevice::ReadOnly)) {
+        LOGD("No global config at '%s' (first run ok)", path.toUtf8().constData());
+        return;
+    }
 
-	const QJsonObject root = doc.object();
-	const QString out = root.value("output_dir").toString();
-	if (!out.isEmpty())
-		g_output_dir = out.toStdString();
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+    if (!doc.isObject())
+        return;
 
-	update_index_path_from_output_dir();
-
-	if (!g_output_dir.empty())
-		LOGI("Loaded output_dir: '%s'", g_output_dir.c_str());
+    const QJsonObject root = doc.object();
+    const QString out = root.value("output_dir").toString().trimmed();
+    if (!out.isEmpty()) {
+        g_output_dir = out.toStdString();
+        LOGI("Loaded output_dir: '%s'", g_output_dir.c_str());
+    }
 }
 
-static std::string replace_all(std::string text, const std::string &from, const std::string &to)
+bool save_global_config()
 {
-	if (from.empty())
-		return text;
+    const std::string pathS = module_config_path_cached();
+    if (pathS.empty())
+        return false;
 
-	size_t pos = 0;
-	while ((pos = text.find(from, pos)) != std::string::npos) {
-		text.replace(pos, from.length(), to);
-		pos += to.length();
-	}
-	return text;
+    QFileInfo fi(QString::fromStdString(pathS));
+    QDir().mkpath(fi.absolutePath());
+
+    QJsonObject root;
+    root["output_dir"] = QString::fromStdString(g_output_dir);
+
+    const QJsonDocument doc(root);
+    return write_text_file(pathS, doc.toJson(QJsonDocument::Compact).toStdString());
 }
 
-static std::string css_from_stored_color(const std::string &stored)
+// Find latest lt-*.html so we can repoint browser on startup without rebuilding.
+static std::string find_latest_lt_html()
 {
-	if (stored.size() == 9 && stored[0] == '#') {
-		auto hexByte = [&](int idx) -> int {
-			char buf[3] = {stored[idx], stored[idx + 1], 0};
-			char *end = nullptr;
-			const long v = strtol(buf, &end, 16);
-			if (!end || *end)
-				return 0;
-			return (int)v;
-		};
+    if (!has_output_dir())
+        return {};
 
-		const int a = hexByte(1);
-		const int r = hexByte(3);
-		const int g = hexByte(5);
-		const int b = hexByte(7);
-
-		char out[64];
-		std::snprintf(out, sizeof(out), "rgba(%d,%d,%d,%.3f)", r, g, b, (double)a / 255.0);
-		return out;
-	}
-
-	return stored;
+    QDir d(QString::fromStdString(output_dir()));
+    const QStringList list = d.entryList(QStringList() << "lt-*.html", QDir::Files, QDir::Time);
+    if (list.isEmpty())
+        return {};
+    return d.filePath(list.first()).toStdString();
 }
 
-static void bump_struct_rev()
+// -------------------------
+// Defaults
+// -------------------------
+static lower_third_cfg default_cfg()
 {
-	if (g_rev == 0)
-		g_rev = 1;
-	else
-		++g_rev;
+    lower_third_cfg c;
+    c.id = new_id();
+    c.title = "New Lower Third";
+    c.subtitle = "Subtitle";
+    c.profile_picture.clear();
+
+    c.anim_in  = "animate__fadeInUp";
+    c.anim_out = "animate__fadeOutDown";
+    c.custom_anim_in.clear();
+    c.custom_anim_out.clear();
+
+    c.font_family = "Inter";
+    c.lt_position = "lt-pos-bottom-left";
+
+    c.bg_color = "#111827";
+    c.text_color = "#F9FAFB";
+
+    c.html_template =
+        R"HTML(
+<div class="slt-card">
+  <div class="slt-left">
+    <img class="slt-avatar" src="{{PROFILE_PICTURE_URL}}" alt="" onerror="this.style.display='none'">
+  </div>
+  <div class="slt-right">
+    <div class="slt-title">{{TITLE}}</div>
+    <div class="slt-subtitle">{{SUBTITLE}}</div>
+  </div>
+</div>
+)HTML";
+
+    c.css_template =
+        R"CSS(
+.slt-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: {{BG_COLOR}};
+  color: {{TEXT_COLOR}};
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  font-family: {{FONT_FAMILY}}, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
-void set_output_dir(const std::string &dir)
-{
-	g_output_dir = dir;
-	update_index_path_from_output_dir();
-	save_global_config();
+.slt-avatar {
+  width: 100px; height: 100px; border-radius: 50%;
+  object-fit: cover; background: rgba(255,255,255,0.08);
+  flex-shrink: 0;
 }
 
-bool has_output_dir()
-{
-	return !g_output_dir.empty() && !g_index_html_path.empty();
+/* Hide the image if the source is empty or the placeholder ./ */
+.slt-avatar:not([src]), 
+.slt-avatar[src=""], 
+.slt-avatar[src="./"] {
+  display: none !important;
 }
 
-const std::string &output_dir()
-{
-	return g_output_dir;
+.slt-title { font-weight: 700; font-size: 46px; line-height: 1.1; }
+.slt-subtitle { opacity: 0.9; font-size: 24px; margin-top: 2px; }
+)CSS";
+
+    c.js_template = "// Custom JS logic here";
+    c.hotkey.clear();
+    return c;
 }
 
-const std::string &index_html_path()
+static std::string resolve_in_class(const lower_third_cfg &c)
 {
-	return g_index_html_path;
+    if (c.anim_in == "custom") return c.custom_anim_in;
+    return c.anim_in;
 }
 
-std::string state_json_path()
+static std::string resolve_out_class(const lower_third_cfg &c)
 {
-	if (!has_output_dir())
-		return {};
-
-	std::string p = g_output_dir;
-	const char last = p.back();
-	if (last != '/' && last != '\\')
-		p += '/';
-	p += "smart-lower-thirds-state.json";
-	return p;
+    if (c.anim_out == "custom") return c.custom_anim_out;
+    return c.anim_out;
 }
 
-static std::string make_new_id()
+// -------------------------
+// HTML/CSS/JS generation
+// -------------------------
+static std::string build_shared_css()
 {
-	size_t idx = g_items.size() + 1;
-	for (;;) {
-		const std::string candidate = "lower-third-" + std::to_string(idx);
-
-		const bool exists = std::any_of(g_items.begin(), g_items.end(),
-						[&](const LowerThirdConfig &c) { return c.id == candidate; });
-
-		if (!exists)
-			return candidate;
-
-		++idx;
-	}
+    return R"CSS(
+/* Smart Lower Thirds - Base */
+:root{ --slt-safe-margin: 40px; --slt-z: 9999; }
+html,body{ margin:0; padding:0; background:transparent; overflow:hidden; }
+#slt-root{
+    position:fixed; inset:0;
+    margin:0; padding:0; list-style:none;
+    pointer-events:none;
+    z-index: var(--slt-z);
+}
+#slt-root > li{
+    position:absolute;
+    display: none; /* FIX: Start completely hidden from the layout engine */
+    pointer-events:none;
+}
+/* These ensure the display property is toggled correctly */
+.slt-visible { display: block !important; }
+.slt-hidden  { display: none !important; }
+)CSS";
 }
 
-static LowerThirdConfig make_default_cfg()
+static std::string scope_css_best_effort(const lower_third_cfg &c)
 {
-	LowerThirdConfig cfg;
-	cfg.id = make_new_id();
+    std::string css = c.css_template;
 
-	cfg.title = "Your Name";
-	cfg.subtitle = "Role / Topic";
+    css = replace_all(css, "{{ID}}", c.id);
+    css = replace_all(css, "{{BG_COLOR}}", c.bg_color);
+    css = replace_all(css, "{{TEXT_COLOR}}", c.text_color);
+    css = replace_all(css, "{{FONT_FAMILY}}", c.font_family.empty() ? "Inter" : c.font_family);
 
-	cfg.anim_in = "animate__fadeInUp";
-	cfg.anim_out = "animate__fadeOutDown";
-	cfg.custom_anim_in.clear();
-	cfg.custom_anim_out.clear();
+    if (css.find("#" + c.id) != std::string::npos) {
+        return "/* ---- " + c.id + " ---- */\n" + css + "\n";
+    }
 
-	cfg.lt_position = "lt-pos-bottom-left";
-	cfg.font_family = "Inter";
+    std::stringstream in(css);
+    std::string line;
+    std::string out;
+    out += "/* ---- " + c.id + " ---- */\n";
 
-	cfg.bg_color = "#111827";
-	cfg.text_color = "#F9FAFB";
+    while (std::getline(in, line)) {
+        std::string trimmed = line;
+        trimmed.erase(trimmed.begin(), std::find_if(trimmed.begin(), trimmed.end(),
+            [](unsigned char ch){ return !std::isspace(ch); }));
 
-	cfg.hotkey.clear();
-	cfg.visible = false;
-	cfg.profile_picture.clear();
+        const bool isAt = (!trimmed.empty() && trimmed[0] == '@');
+        if (!isAt && line.find('{') != std::string::npos) {
+            const auto pos = line.find('{');
+            std::string sel = line.substr(0, pos);
+            std::string rest = line.substr(pos);
 
-	cfg.html_template =
-		"<li id=\"{{ID}}\" class=\"lower-third {{LT_POSITION}} animate__animated\" style=\"opacity:0;\">\n"
-		"  <div class=\"slt-card\">\n"
-		"    <div class=\"slt-accent\"></div>\n"
-		"    <div class=\"slt-body\">\n"
-		"      <div class=\"slt-avatar-wrap\" data-has-avatar=\"{{HAS_AVATAR}}\">\n"
-		"        <img class=\"slt-avatar\" src=\"{{PROFILE_PICTURE}}\" alt=\"\" />\n"
-		"      </div>\n"
-		"      <div class=\"slt-text\">\n"
-		"        <div class=\"slt-title\">{{TITLE}}</div>\n"
-		"        <div class=\"slt-subtitle\">{{SUBTITLE}}</div>\n"
-		"      </div>\n"
-		"    </div>\n"
-		"  </div>\n"
-		"</li>\n";
+            std::stringstream ss(sel);
+            std::string part;
+            std::string newSel;
+            bool first = true;
+            while (std::getline(ss, part, ',')) {
+                if (part.find("#" + c.id) == std::string::npos)
+                    part = " #" + c.id + " " + part;
+                if (!first) newSel += ",";
+                newSel += part;
+                first = false;
+            }
+            out += newSel + rest + "\n";
+        } else {
+            out += line + "\n";
+        }
+    }
 
-	cfg.css_template =
-		"#{{ID}}{"
-		"--slt-radius:22px;"
-		"--slt-pad-y:22px;"
-		"--slt-pad-x:28px;"
-		"--slt-gap:18px;"
-		"--slt-accent-w:10px;"
-		"--slt-avatar:112px;"
-		"--slt-title:56px;"
-		"--slt-subtitle:34px;"
-		"--slt-border:rgba(255,255,255,0.18);"
-		"--slt-border-soft:rgba(255,255,255,0.10);"
-		"--slt-shadow:0 22px 70px rgba(0,0,0,0.45);"
-		"-webkit-font-smoothing:antialiased;"
-		"-moz-osx-font-smoothing:grayscale;"
-		"} \n"
-
-		"#{{ID}} .slt-card{"
-		"position:relative;"
-		"display:inline-block;"
-		"border-radius:var(--slt-radius);"
-		"overflow:hidden;"
-		"box-shadow:var(--slt-shadow);"
-		"transform:translateZ(0);"
-		"isolation:isolate;"
-		"} \n"
-
-		"#{{ID}} .slt-accent{"
-		"position:absolute;"
-		"inset:0 auto 0 0;"
-		"width:var(--slt-accent-w);"
-		"opacity:.98;"
-		"background:linear-gradient(180deg,rgba(96,165,250,1) 0%,rgba(34,197,94,1) 55%,rgba(16,185,129,1) 100%);"
-		"box-shadow:0 0 0 1px rgba(255,255,255,0.10) inset,0 10px 30px rgba(0,0,0,0.28);"
-		"} \n"
-
-		"#{{ID}} .slt-body{"
-		"position:relative;"
-		"display:flex;"
-		"align-items:center;"
-		"gap:var(--slt-gap);"
-		"padding:var(--slt-pad-y) var(--slt-pad-x) var(--slt-pad-y) calc(var(--slt-pad-x) + 6px);"
-		"background-color:{{BG_COLOR}};"
-		"color:{{TEXT_COLOR}};"
-		"border:1px solid var(--slt-border);"
-		"border-left:none;"
-		"backdrop-filter:blur(14px);"
-		"-webkit-backdrop-filter:blur(14px);"
-		"box-shadow:0 0 0 1px var(--slt-border-soft) inset,0 18px 45px rgba(0,0,0,0.25);"
-		"} \n"
-
-		"#{{ID}} .slt-body::before{"
-		"content:'';"
-		"position:absolute;"
-		"inset:0;"
-		"pointer-events:none;"
-		"background:radial-gradient(120% 140% at 0% 0%,rgba(255,255,255,0.16) 0%,rgba(255,255,255,0.06) 35%,rgba(255,255,255,0.00) 70%);"
-		"mix-blend-mode:overlay;"
-		"opacity:.85;"
-		"} \n"
-
-		"#{{ID}} .slt-avatar-wrap{"
-		"width:var(--slt-avatar);"
-		"height:var(--slt-avatar);"
-		"border-radius:999px;"
-		"overflow:hidden;"
-		"flex:0 0 auto;"
-		"position:relative;"
-		"border:2px solid rgba(255,255,255,0.22);"
-		"box-shadow:0 12px 28px rgba(0,0,0,0.35),0 0 0 1px rgba(0,0,0,0.25) inset;"
-		"} \n"
-
-		"#{{ID}} .slt-avatar-wrap::after{"
-		"content:'';"
-		"position:absolute;"
-		"inset:0;"
-		"pointer-events:none;"
-		"background:radial-gradient(120% 120% at 30% 20%,rgba(255,255,255,0.22) 0%,rgba(255,255,255,0.00) 55%);"
-		"opacity:.9;"
-		"} \n"
-
-		"#{{ID}} .slt-avatar-wrap[data-has-avatar=\"0\"]{display:none;} \n"
-
-		"#{{ID}} .slt-avatar{"
-		"width:100%;"
-		"height:100%;"
-		"object-fit:cover;"
-		"display:block;"
-		"} \n"
-
-		"#{{ID}} .slt-text{"
-		"display:flex;"
-		"flex-direction:column;"
-		"gap:8px;"
-		"min-width:0;"
-		"} \n"
-
-		"#{{ID}} .slt-title{"
-		"font-family:{{FONT_FAMILY}},system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
-		"font-size:var(--slt-title);"
-		"font-weight:900;"
-		"letter-spacing:.2px;"
-		"line-height:1.05;"
-		"margin:0;"
-		"text-shadow:0 2px 14px rgba(0,0,0,0.35),0 1px 0 rgba(0,0,0,0.15);"
-		"white-space:nowrap;"
-		"overflow:hidden;"
-		"text-overflow:ellipsis;"
-		"} \n"
-
-		"#{{ID}} .slt-subtitle{"
-		"font-family:{{FONT_FAMILY}},system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
-		"font-size:var(--slt-subtitle);"
-		"font-weight:600;"
-		"opacity:.92;"
-		"letter-spacing:.25px;"
-		"line-height:1.15;"
-		"margin:0;"
-		"text-shadow:0 1px 10px rgba(0,0,0,0.28);"
-		"white-space:nowrap;"
-		"overflow:hidden;"
-		"text-overflow:ellipsis;"
-		"} \n"
-
-		"#{{ID}} .slt-avatar-wrap[data-has-avatar=\"0\"] + .slt-text{padding-left:4px;} \n";
-
-	return cfg;
+    return out;
 }
 
-std::vector<LowerThirdConfig> &all()
+static std::string build_base_script(const std::vector<lower_third_cfg> &items)
 {
-	return g_items;
+    // Build animation map with staggering support
+    std::string map = "{\n";
+    for (const auto &c : items) {
+        const std::string inC  = resolve_in_class(c);
+        const std::string outC = resolve_out_class(c);
+        
+        // Assuming your lower_third_cfg has a 'delay_ms' field (e.g., 0, 200, 500)
+        // If not, you can hardcode 0 here for now.
+        int delay = 0; 
+
+        map += "    \"" + c.id + "\": { "
+               "inCls: " + (inC.empty() ? "null" : ("\"" + inC + "\"")) + ", "
+               "outCls: " + (outC.empty() ? "null" : ("\"" + outC + "\"")) + ", "
+               "delay: " + std::to_string(delay) +
+               " },\n";
+    }
+    map += "  };\n";
+
+    return std::string(R"JS(
+/* Smart Lower Thirds – Staggered Animation Script */
+(() => {
+  const VISIBLE_URL = "./lt-visible.json";
+  const animMap = )JS") + map + R"JS(
+
+  function stripAnimate(el) {
+    el.classList.remove("animate__animated");
+    el.style.animationDelay = ""; // Reset delay
+    [...el.classList].forEach(c => {
+      if (c.startsWith("animate__")) el.classList.remove(c);
+    });
+  }
+
+  function hasAnim(cls) {
+    return cls && String(cls).trim().length > 0;
+  }
+
+  function applyIn(el, cfg) {
+    if (el.dataset.state === "showing" || el.dataset.state === "visible") return;
+    
+    el.dataset.state = "showing";
+    stripAnimate(el);
+
+    // FIX: Make the element displayable BEFORE the animation starts
+    el.classList.remove("slt-hidden");
+    el.classList.add("slt-visible"); 
+
+    if (hasAnim(cfg.inCls)) {
+      if (cfg.delay > 0) el.style.animationDelay = cfg.delay + "ms";
+
+      el.classList.add("animate__animated");
+      cfg.inCls.split(/\s+/).forEach(c => el.classList.add(c));
+      
+      el.onanimationend = () => {
+        el.dataset.state = "visible";
+        el.style.animationDelay = "";
+        el.onanimationend = null;
+      };
+    } else {
+      el.dataset.state = "visible";
+    }
+  }
+
+  function applyOut(el, cfg) {
+    if (el.dataset.state === "hiding" || el.dataset.state === "hidden") return;
+
+    el.dataset.state = "hiding";
+    stripAnimate(el);
+
+    if (hasAnim(cfg.outCls)) {
+      el.classList.add("animate__animated");
+      cfg.outCls.split(/\s+/).forEach(c => el.classList.add(c));
+
+      el.onanimationend = () => {
+        stripAnimate(el);
+        // FIX: Re-apply hidden class to remove from display logic
+        el.classList.remove("slt-visible");
+        el.classList.add("slt-hidden");
+        el.dataset.state = "hidden";
+        el.onanimationend = null;
+      };
+    } else {
+      el.classList.remove("slt-visible");
+      el.classList.add("slt-hidden");
+      el.dataset.state = "hidden";
+    }
+  }
+
+  async function tick() {
+    try {
+      const r = await fetch(VISIBLE_URL + "?t=" + Date.now(), { cache: "no-store" });
+      const visibleIds = await r.json();
+      if (!Array.isArray(visibleIds)) return;
+      
+      const visibleSet = new Set(visibleIds.map(String));
+
+      document.querySelectorAll("#slt-root > li[id]").forEach(el => {
+        const id = el.id;
+        const cfg = animMap[id] || {};
+        const shouldShow = visibleSet.has(id);
+        const state = el.dataset.state;
+
+        if (shouldShow) {
+          if (state !== "visible" && state !== "showing") {
+            applyIn(el, cfg);
+          }
+        } else {
+          if (state !== "hidden" && state !== "hiding") {
+            applyOut(el, cfg);
+          }
+        }
+      });
+    } catch (e) {}
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    tick();
+    setInterval(tick, 350);
+  });
+})();
+)JS";
 }
 
-LowerThirdConfig *get_by_id(const std::string &id)
+static std::string build_item_script(const lower_third_cfg &c)
 {
-	for (auto &it : g_items) {
-		if (it.id == id)
-			return &it;
-	}
-	return nullptr;
+    std::string js = c.js_template;
+    js = replace_all(js, "{{ID}}", c.id);
+
+    std::string out;
+    out += "\n/* ---- " + c.id + " ---- */\n";
+    out += "(() => {\n";
+    out += "  const root = document.getElementById(\"" + c.id + "\");\n";
+    out += "  if (!root) return;\n";
+    out += "  try {\n";
+    out += js;
+    out += "\n  } catch(e) { console.error(\"SLT script error for " + c.id + "\", e); }\n";
+    out += "})();\n";
+    return out;
 }
 
-static QJsonObject cfg_to_json(const LowerThirdConfig &cfg)
+static std::string build_full_html()
 {
-	QJsonObject o;
-	o["id"] = QString::fromStdString(cfg.id);
-	o["title"] = QString::fromStdString(cfg.title);
-	o["subtitle"] = QString::fromStdString(cfg.subtitle);
-	o["anim_in"] = QString::fromStdString(cfg.anim_in);
-	o["anim_out"] = QString::fromStdString(cfg.anim_out);
-	o["custom_anim_in"] = QString::fromStdString(cfg.custom_anim_in);
-	o["custom_anim_out"] = QString::fromStdString(cfg.custom_anim_out);
-	o["font_family"] = QString::fromStdString(cfg.font_family);
-	o["lt_position"] = QString::fromStdString(cfg.lt_position);
-	o["bg_color"] = QString::fromStdString(cfg.bg_color);
-	o["text_color"] = QString::fromStdString(cfg.text_color);
-	o["html_template"] = QString::fromStdString(cfg.html_template);
-	o["css_template"] = QString::fromStdString(cfg.css_template);
-	o["visible"] = cfg.visible;
-	o["hotkey"] = QString::fromStdString(cfg.hotkey);
-	o["profile_picture"] = QString::fromStdString(cfg.profile_picture);
-	return o;
+    std::string html;
+    html += "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\"/>\n";
+    html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n";
+    html += "<link rel=\"stylesheet\" href=\"./lt-styles.css\"/>\n";
+    html += "<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css\">\n";
+    html += "</head>\n<body>\n<ul id=\"slt-root\">\n";
+
+    for (const auto &c : g_items) {
+        std::string inner = c.html_template;
+        inner = replace_all(inner, "{{ID}}", c.id);
+        inner = replace_all(inner, "{{TITLE}}", c.title);
+        inner = replace_all(inner, "{{SUBTITLE}}", c.subtitle);
+        inner = replace_all(inner, "{{BG_COLOR}}", c.bg_color);
+        inner = replace_all(inner, "{{TEXT_COLOR}}", c.text_color);
+        inner = replace_all(inner, "{{FONT_FAMILY}}", c.font_family.empty() ? "Inter" : c.font_family);
+
+        // Logic: If empty, we send a string that matches the CSS [src="./"] selector
+        const std::string pic = c.profile_picture.empty() ? "./" : ("./" + c.profile_picture);
+        inner = replace_all(inner, "{{PROFILE_PICTURE_URL}}", pic);
+
+        // Safety Inject: Add onerror to any img tags in the user's template 
+        // if they haven't already added it.
+        if (inner.find("onerror") == std::string::npos) {
+            inner = replace_all(inner, "<img ", "<img onerror=\"this.style.display='none'\" ");
+        }
+
+        html += "  <li id=\"" + c.id + "\" class=\"" + c.lt_position + "\">";
+        html += inner;
+        html += "</li>\n";
+    }
+
+    html += "</ul>\n<script src=\"./lt-scripts.js\"></script>\n</body>\n</html>\n";
+    return html;
 }
 
-bool save_state_json()
+// -------------------------
+// Public
+// -------------------------
+bool has_output_dir() { return !g_output_dir.empty(); }
+std::string output_dir() { return g_output_dir; }
+
+std::string path_state_json()   { return has_output_dir() ? join_path(g_output_dir, "lt-state.json") : ""; }
+std::string path_visible_json() { return has_output_dir() ? join_path(g_output_dir, "lt-visible.json") : ""; }
+std::string path_styles_css()   { return has_output_dir() ? join_path(g_output_dir, "lt-styles.css") : ""; }
+std::string path_scripts_js()   { return has_output_dir() ? join_path(g_output_dir, "lt-scripts.js") : ""; }
+
+std::string now_timestamp_string()
 {
-	if (!has_output_dir())
-		return false;
-
-	const QString path = QString::fromStdString(state_json_path());
-	if (path.isEmpty())
-		return false;
-
-	const QFileInfo fi(path);
-	if (!fi.dir().exists()) {
-		LOGW("Output directory does not exist: '%s'", fi.dir().absolutePath().toUtf8().constData());
-		return false;
-	}
-
-	QJsonObject root;
-	root["rev"] = static_cast<qint64>(g_rev);
-	root["saved_utc"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-
-	QJsonArray arr;
-	for (const auto &cfg : g_items)
-		arr.append(cfg_to_json(cfg));
-	root["items"] = arr;
-
-	const QJsonDocument doc(root);
-	const QByteArray bytes = doc.toJson(QJsonDocument::Compact);
-
-	QSaveFile f(path);
-	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-		LOGW("Failed to open state JSON '%s' (%s)", path.toUtf8().constData(),
-		     f.errorString().toUtf8().constData());
-		return false;
-	}
-
-	if (f.write(bytes) != bytes.size()) {
-		LOGW("Failed to write state JSON '%s' (%s)", path.toUtf8().constData(),
-		     f.errorString().toUtf8().constData());
-		return false;
-	}
-
-	if (!f.commit()) {
-		LOGW("Failed to commit state JSON '%s' (%s)", path.toUtf8().constData(),
-		     f.errorString().toUtf8().constData());
-		return false;
-	}
-
-	LOGD("Saved '%s' (rev=%llu)", path.toUtf8().constData(), (unsigned long long)g_rev);
-	return true;
+    const qint64 ts = QDateTime::currentMSecsSinceEpoch();
+    return std::to_string((long long)ts);
 }
 
-bool load_state_json()
+std::string new_id()
 {
-	if (!has_output_dir())
-		return false;
+    static std::mt19937_64 rng{ std::random_device{}() };
+    static std::uniform_int_distribution<uint64_t> dist;
+    uint64_t a = dist(rng);
+    uint64_t b = dist(rng);
 
-	const QString path = QString::fromStdString(state_json_path());
-	if (path.isEmpty())
-		return false;
-
-	QFile f(path);
-	if (!f.exists() || !f.open(QIODevice::ReadOnly)) {
-		LOGD("No state JSON at '%s' (ok if folder is empty)", path.toUtf8().constData());
-		return false;
-	}
-
-	const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-	if (!doc.isObject()) {
-		LOGW("Invalid JSON in '%s'", path.toUtf8().constData());
-		return false;
-	}
-
-	const QJsonObject root = doc.object();
-
-	g_rev = static_cast<uint64_t>(root.value("rev").toVariant().toLongLong());
-	if (g_rev == 0)
-		g_rev = 1;
-
-	g_items.clear();
-
-	const QJsonValue itemsVal = root.value("items");
-	if (itemsVal.isArray()) {
-		const QJsonArray itemsArr = itemsVal.toArray();
-		g_items.reserve(itemsArr.size());
-
-		for (const QJsonValue &v : itemsArr) {
-			if (!v.isObject())
-				continue;
-
-			const QJsonObject o = v.toObject();
-			LowerThirdConfig cfg;
-
-			cfg.id = o.value("id").toString().toStdString();
-			cfg.title = o.value("title").toString().toStdString();
-			cfg.subtitle = o.value("subtitle").toString().toStdString();
-			cfg.anim_in = o.value("anim_in").toString().toStdString();
-			cfg.anim_out = o.value("anim_out").toString().toStdString();
-			cfg.custom_anim_in = o.value("custom_anim_in").toString().toStdString();
-			cfg.custom_anim_out = o.value("custom_anim_out").toString().toStdString();
-			cfg.font_family = o.value("font_family").toString().toStdString();
-			cfg.lt_position = o.value("lt_position").toString().toStdString();
-			cfg.bg_color = o.value("bg_color").toString().toStdString();
-			cfg.text_color = o.value("text_color").toString().toStdString();
-			cfg.html_template = o.value("html_template").toString().toStdString();
-			cfg.css_template = o.value("css_template").toString().toStdString();
-			cfg.visible = o.value("visible").toBool(false);
-			cfg.hotkey = o.value("hotkey").toString().toStdString();
-			cfg.profile_picture = o.value("profile_picture").toString().toStdString();
-
-			if (cfg.lt_position.empty())
-				cfg.lt_position = "lt-pos-bottom-left";
-			if (cfg.anim_in.empty())
-				cfg.anim_in = "animate__fadeInUp";
-			if (cfg.anim_out.empty())
-				cfg.anim_out = "animate__fadeOutDown";
-			if (cfg.font_family.empty())
-				cfg.font_family = "Inter";
-			if (cfg.bg_color.empty())
-				cfg.bg_color = "#111827";
-			if (cfg.text_color.empty())
-				cfg.text_color = "#F9FAFB";
-
-			if (!cfg.id.empty())
-				g_items.push_back(std::move(cfg));
-		}
-	}
-
-	LOGI("Loaded '%s' (%zu items, rev=%llu)", path.toUtf8().constData(), g_items.size(), (unsigned long long)g_rev);
-	return true;
+    std::ostringstream ss;
+    ss << "lt_" << std::hex << a << b;
+    return sanitize_id(ss.str());
 }
 
-static bool slt_is_browser_source(obs_source_t *src)
-{
-	if (!src)
-		return false;
+std::vector<lower_third_cfg> &all() { return g_items; }
+const std::vector<lower_third_cfg> &all_const() { return g_items; }
 
-	const char *id = obs_source_get_id(src);
-	return id && std::strcmp(id, "browser_source") == 0;
+lower_third_cfg *get_by_id(const std::string &id)
+{
+    for (auto &c : g_items)
+        if (c.id == id)
+            return &c;
+    return nullptr;
 }
 
-static bool slt_is_managed(obs_data_t *settings)
+std::vector<std::string> visible_ids() { return g_visible; }
+
+bool is_visible(const std::string &id)
 {
-	return settings && obs_data_get_bool(settings, "smart_lt_managed");
+    return std::find(g_visible.begin(), g_visible.end(), id) != g_visible.end();
 }
 
-static void slt_reload_browser_source(obs_source_t *src, obs_data_t *settings)
+void set_visible(const std::string &id, bool visible)
 {
-	const bool shutdown = obs_data_get_bool(settings, "shutdown");
-	obs_data_set_bool(settings, "shutdown", !shutdown);
-	obs_source_update(src, settings);
+    if (id.empty())
+        return;
 
-	obs_data_set_bool(settings, "shutdown", shutdown);
-	obs_source_update(src, settings);
+    if (visible) {
+        if (!is_visible(id))
+            g_visible.push_back(id);
+    } else {
+        g_visible.erase(std::remove(g_visible.begin(), g_visible.end(), id), g_visible.end());
+    }
 }
 
-void repoint_managed_browser_sources(bool reload)
+void toggle_visible(const std::string &id)
 {
-	if (!has_output_dir())
-		return;
-
-	const std::string &htmlPath = index_html_path();
-	if (htmlPath.empty())
-		return;
-
-	size_t visited = 0, updated = 0;
-
-	auto cb = [](void *param, obs_source_t *src) -> bool {
-		auto *ctx = static_cast<std::tuple<const char *, bool, size_t *, size_t *> *>(param);
-		const char *desired = std::get<0>(*ctx);
-		const bool doReload = std::get<1>(*ctx);
-		size_t *visitedPtr = std::get<2>(*ctx);
-		size_t *updatedPtr = std::get<3>(*ctx);
-
-		if (!src || !slt_is_browser_source(src))
-			return true;
-
-		(*visitedPtr)++;
-
-		obs_data_t *settings = obs_source_get_settings(src);
-		if (!settings)
-			return true;
-
-		if (!slt_is_managed(settings)) {
-			obs_data_release(settings);
-			return true;
-		}
-
-		obs_data_set_bool(settings, "is_local_file", true);
-
-		const char *cur = obs_data_get_string(settings, "local_file");
-		const bool differs = (!cur || std::strcmp(cur, desired) != 0);
-
-		if (differs) {
-			obs_data_set_string(settings, "local_file", desired);
-			obs_source_update(src, settings);
-			(*updatedPtr)++;
-		}
-
-		if (doReload)
-			slt_reload_browser_source(src, settings);
-
-		obs_data_release(settings);
-		return true;
-	};
-
-	std::tuple<const char *, bool, size_t *, size_t *> ctx{htmlPath.c_str(), reload, &visited, &updated};
-	obs_enum_sources(cb, &ctx);
-
-	LOGI("Repoint managed browser sources: updated=%zu visited=%zu html='%s'", updated, visited, htmlPath.c_str());
-}
-
-bool write_index_html()
-{
-	if (!has_output_dir()) {
-		LOGW("Output directory not set; skipping HTML generation");
-		return false;
-	}
-
-	const QString htmlPath = QString::fromStdString(g_index_html_path);
-	const QFileInfo fi(htmlPath);
-	if (!fi.dir().exists()) {
-		LOGW("Output directory does not exist: '%s'", fi.dir().absolutePath().toUtf8().constData());
-		return false;
-	}
-
-	std::string html;
-	html.reserve(30000);
-
-	html += "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\" />\n";
-	html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n";
-	html += "<title>Smart Lower Thirds</title>\n";
-	html += "<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css\" />\n";
-	html += "<style>\n";
-	html += "html,body{margin:0;padding:0;background:transparent;overflow:hidden;}\n";
-	html += "ul#lower-thirds-root{list-style:none;margin:0;padding:0;}\n";
-	html += ".lower-third{position:absolute;opacity:0;pointer-events:none;}\n";
-	html += ".lt-pos-bottom-left{left:5%;bottom:5%;top:auto;right:auto;transform:translate(0,0);}\n";
-	html += ".lt-pos-bottom-right{right:5%;bottom:5%;left:auto;top:auto;transform:translate(0,0);}\n";
-	html += ".lt-pos-top-left{left:5%;top:5%;right:auto;bottom:auto;transform:translate(0,0);}\n";
-	html += ".lt-pos-top-right{right:5%;top:5%;left:auto;bottom:auto;transform:translate(0,0);}\n";
-	html += ".lt-pos-center{top:50%;left:50%;right:auto;bottom:auto;transform:translate(-50%,-50%);}\n";
-	html += "</style>\n";
-	html += "<style id=\"slt-dynamic-style\"></style>\n";
-	html += "</head>\n<body>\n<ul id=\"lower-thirds-root\"></ul>\n";
-
-	std::string jsAllAnims = "  const ALL_ANIMS=[";
-	bool first = true;
-	auto append = [&](const char *cls) {
-		if (!cls || !*cls)
-			return;
-		if (!first)
-			jsAllAnims += ",";
-		jsAllAnims += "'";
-		jsAllAnims += cls;
-		jsAllAnims += "'";
-		first = false;
-	};
-	for (const auto &opt : AnimInOptions)
-		if (std::string(opt.value) != "custom")
-			append(opt.value);
-	for (const auto &opt : AnimOutOptions)
-		if (std::string(opt.value) != "custom")
-			append(opt.value);
-	jsAllAnims += "];\n";
-
-	html += "<script>\n(function(){\n";
-	html += "  const HTML_REV=" + std::to_string(g_rev) + ";\n";
-	html += "  const ROOT=document.getElementById('lower-thirds-root');\n";
-	html += "  const STYLE=document.getElementById('slt-dynamic-style');\n";
-	html += jsAllAnims;
-	html += "  const byId=new Map();\n";
-	html += "  const lastVisible=new Set();\n";
-	html += "  let lastCssSig='';\n";
-	html += "  const animSeq=new Map();\n";
-	html += "  const endHandlers=new Map();\n";
-	html += "  function bumpSeq(id){ const n=(animSeq.get(id)||0)+1; animSeq.set(id,n); return n; }\n";
-	html += "  function removeEndHandler(id, li){\n";
-	html += "    const h=endHandlers.get(id);\n";
-	html += "    if(h && li){ li.removeEventListener('animationend', h); li.removeEventListener('animationcancel', h); }\n";
-	html += "    endHandlers.delete(id);\n";
-	html += "  }\n";
-	html += "  function restartAnim(li){ if(!li) return; void li.offsetHeight; }\n";
-	html += "  function clearAnim(li){\n";
-	html += "    if(!li) return;\n";
-	html += "    ALL_ANIMS.forEach(a=>li.classList.remove(a));\n";
-	html += "    const last=li.dataset.sltLastAnim||'';\n";
-	html += "    if(last){ li.classList.remove(last); li.dataset.sltLastAnim=''; }\n";
-	html += "  }\n";
-	html += "  function effectiveIn(it){ return (it.anim_in==='custom') ? (it.custom_anim_in||'') : (it.anim_in||''); }\n";
-	html += "  function effectiveOut(it){ return (it.anim_out==='custom') ? (it.custom_anim_out||'') : (it.anim_out||''); }\n";
-	html += "  function safeStr(v){ return (v===null||v===undefined) ? '' : String(v); }\n";
-	html += "  function repl(tpl, map){\n";
-	html += "    let s=safeStr(tpl);\n";
-	html += "    for(const k in map){ s=s.split(k).join(map[k]); }\n";
-	html += "    return s;\n";
-	html += "  }\n";
-	html += "  function normColor(c){ return safeStr(c); }\n";
-	html += "  function renderItem(it){\n";
-	html += "    const id=safeStr(it.id);\n";
-	html += "    if(!id) return;\n";
-	html += "    const hasAvatar = !!safeStr(it.profile_picture);\n";
-	html += "    const map={\n";
-	html += "      '{{ID}}': id,\n";
-	html += "      '{{TITLE}}': safeStr(it.title),\n";
-	html += "      '{{SUBTITLE}}': safeStr(it.subtitle),\n";
-	html += "      '{{PROFILE_PICTURE}}': safeStr(it.profile_picture),\n";
-	html += "      '{{HAS_AVATAR}}': hasAvatar ? '1' : '0',\n";
-	html += "      '{{LT_POSITION}}': safeStr(it.lt_position),\n";
-	html += "      '{{FONT_FAMILY}}': safeStr(it.font_family),\n";
-	html += "      '{{BG_COLOR}}': normColor(it.bg_color),\n";
-	html += "      '{{TEXT_COLOR}}': normColor(it.text_color)\n";
-	html += "    };\n";
-	html += "    const htmlTpl=repl(it.html_template, map);\n";
-	html += "    const sig=htmlTpl + '|' + safeStr(it.lt_position);\n";
-	html += "    const prev=byId.get(id);\n";
-	html += "    if(!prev){\n";
-	html += "      const tmp=document.createElement('div');\n";
-	html += "      tmp.innerHTML=htmlTpl.trim();\n";
-	html += "      const li=tmp.firstElementChild;\n";
-	html += "      if(!li) return;\n";
-	html += "      li.style.opacity='0';\n";
-	html += "      li.style.pointerEvents='none';\n";
-	html += "      ROOT.appendChild(li);\n";
-	html += "      byId.set(id,{li:li,sig:sig});\n";
-	html += "      return;\n";
-	html += "    }\n";
-	html += "    if(prev.sig!==sig){\n";
-	html += "      const old=prev.li;\n";
-	html += "      const tmp=document.createElement('div');\n";
-	html += "      tmp.innerHTML=htmlTpl.trim();\n";
-	html += "      const li=tmp.firstElementChild;\n";
-	html += "      if(!li) return;\n";
-	html += "      li.style.opacity = old.style.opacity || '0';\n";
-	html += "      li.style.pointerEvents = old.style.pointerEvents || 'none';\n";
-	html += "      // Preserve last anim tracking across rerender (so clearAnim can remove custom class too)\n";
-	html += "      li.dataset.sltLastAnim = old.dataset.sltLastAnim || '';\n";
-	html += "      old.replaceWith(li);\n";
-	html += "      prev.li=li;\n";
-	html += "      prev.sig=sig;\n";
-	html += "    }\n";
-	html += "  }\n";
-	html += "  function buildCss(items){\n";
-	html += "    let css='';\n";
-	html += "    for(const it of items){\n";
-	html += "      const id=safeStr(it.id);\n";
-	html += "      if(!id) continue;\n";
-	html += "      const hasAvatar = !!safeStr(it.profile_picture);\n";
-	html += "      const map={\n";
-	html += "        '{{ID}}': id,\n";
-	html += "        '{{TITLE}}': safeStr(it.title),\n";
-	html += "        '{{SUBTITLE}}': safeStr(it.subtitle),\n";
-	html += "        '{{PROFILE_PICTURE}}': safeStr(it.profile_picture),\n";
-	html += "        '{{HAS_AVATAR}}': hasAvatar ? '1' : '0',\n";
-	html += "        '{{LT_POSITION}}': safeStr(it.lt_position),\n";
-	html += "        '{{FONT_FAMILY}}': safeStr(it.font_family),\n";
-	html += "        '{{BG_COLOR}}': normColor(it.bg_color),\n";
-	html += "        '{{TEXT_COLOR}}': normColor(it.text_color)\n";
-	html += "      };\n";
-	html += "      css += repl(it.css_template, map) + '\\n';\n";
-	html += "    }\n";
-	html += "    return css;\n";
-	html += "  }\n";
-	html += "  function applyVisibility(items){\n";
-	html += "    const visible=new Set();\n";
-	html += "    const anim={};\n";
-	html += "    for(const it of items){\n";
-	html += "      const id=safeStr(it.id); if(!id) continue;\n";
-	html += "      anim[id]={in:effectiveIn(it), out:effectiveOut(it)};\n";
-	html += "      if(!!it.visible) visible.add(id);\n";
-	html += "    }\n";
-	html += "    const toHide=[]; const toShow=[];\n";
-	html += "    lastVisible.forEach(id=>{ if(!visible.has(id)) toHide.push(id); });\n";
-	html += "    visible.forEach(id=>{ if(!lastVisible.has(id)) toShow.push(id); });\n";
-	html += "    for(const id of toHide){\n";
-	html += "      const rec=byId.get(id); if(!rec||!rec.li) continue;\n";
-	html += "      const li=rec.li;\n";
-	html += "      const seq=bumpSeq(id);\n";
-	html += "      removeEndHandler(id, li);\n";
-	html += "      const out=(anim[id]&&anim[id].out) ? anim[id].out : 'animate__fadeOut';\n";
-	html += "      clearAnim(li);\n";
-	html += "      li.style.pointerEvents='none';\n";
-	html += "      li.style.opacity='1';\n";
-	html += "      if(out){\n";
-	html += "        restartAnim(li);\n";
-	html += "        li.classList.add(out);\n";
-	html += "        li.dataset.sltLastAnim=out;\n";
-	html += "      }\n";
-	html += "      const handler=()=>{\n";
-	html += "        // Stale handler guard: only apply if this is still the latest operation for this id\n";
-	html += "        if((animSeq.get(id)||0)!==seq) return;\n";
-	html += "        clearAnim(li);\n";
-	html += "        li.style.opacity='0';\n";
-	html += "        removeEndHandler(id, li);\n";
-	html += "      };\n";
-	html += "      endHandlers.set(id, handler);\n";
-	html += "      li.addEventListener('animationend', handler);\n";
-	html += "      li.addEventListener('animationcancel', handler);\n";
-	html += "    }\n";
-
-	// Then show
-	html += "    for(const id of toShow){\n";
-	html += "      const rec=byId.get(id); if(!rec||!rec.li) continue;\n";
-	html += "      const li=rec.li;\n";
-	html += "      // invalidate any pending hide completion\n";
-	html += "      bumpSeq(id);\n";
-	html += "      removeEndHandler(id, li);\n";
-	html += "      const inn=(anim[id]&&anim[id].in) ? anim[id].in : 'animate__fadeIn';\n";
-	html += "      clearAnim(li);\n";
-	html += "      li.style.opacity='1';\n";
-	html += "      li.style.pointerEvents='auto';\n";
-	html += "      if(inn){\n";
-	html += "        restartAnim(li);\n";
-	html += "        li.classList.add(inn);\n";
-	html += "        li.dataset.sltLastAnim=inn;\n";
-	html += "      }\n";
-	html += "    }\n";
-
-	html += "    lastVisible.clear(); visible.forEach(id=>lastVisible.add(id));\n";
-	html += "  }\n";
-
-	html += "  function sync(items){\n";
-	html += "    const seen=new Set();\n";
-	html += "    for(const it of items){ const id=safeStr(it.id); if(!id) continue; seen.add(id); renderItem(it); }\n";
-	html += "    // remove nodes not in JSON\n";
-	html += "    for(const [id,rec] of byId.entries()){\n";
-	html += "      if(!seen.has(id)){\n";
-	html += "        if(rec && rec.li) rec.li.remove();\n";
-	html += "        byId.delete(id);\n";
-	html += "        lastVisible.delete(id);\n";
-	html += "        animSeq.delete(id);\n";
-	html += "        endHandlers.delete(id);\n";
-	html += "      }\n";
-	html += "    }\n";
-	html += "    // css signature\n";
-	html += "    let cssSig='';\n";
-	html += "    for(const it of items){\n";
-	html += "      cssSig += safeStr(it.id)+'|'+safeStr(it.css_template)+'|'+safeStr(it.font_family)+'|'+safeStr(it.bg_color)+'|'+safeStr(it.text_color)+'|'+safeStr(it.profile_picture)+'\\n';\n";
-	html += "    }\n";
-	html += "    if(cssSig!==lastCssSig){\n";
-	html += "      lastCssSig=cssSig;\n";
-	html += "      STYLE.textContent=buildCss(items);\n";
-	html += "    }\n";
-	html += "    applyVisibility(items);\n";
-	html += "  }\n";
-
-	html += "  async function tick(){\n";
-	html += "    try{\n";
-	html += "      const res=await fetch('smart-lower-thirds-state.json?ts='+Date.now(), {cache:'no-store'});\n";
-	html += "      if(!res.ok) return;\n";
-	html += "      const data=await res.json();\n";
-	html += "      // NOTE: we do NOT force reload when rev changes.\n";
-	html += "      // HTML_REV is kept only for debugging/telemetry if you need it later.\n";
-	html += "      const items=(data.items||[]);\n";
-	html += "      sync(items);\n";
-	html += "    }catch(e){}\n";
-	html += "  }\n";
-	html += "  tick(); setInterval(tick, 500);\n";
-	html += "})();\n</script>\n";
-
-	html += "</body>\n</html>\n";
-
-	QSaveFile f(htmlPath);
-	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-		LOGE("Failed to open '%s' for writing (%s)", htmlPath.toUtf8().constData(),
-		     f.errorString().toUtf8().constData());
-		return false;
-	}
-
-	const QByteArray bytes = QByteArray::fromStdString(html);
-	if (f.write(bytes) != bytes.size()) {
-		LOGE("Failed to write HTML '%s' (%s)", htmlPath.toUtf8().constData(),
-		     f.errorString().toUtf8().constData());
-		return false;
-	}
-
-	if (!f.commit()) {
-		LOGE("Failed to commit HTML '%s' (%s)", htmlPath.toUtf8().constData(),
-		     f.errorString().toUtf8().constData());
-		return false;
-	}
-
-	LOGI("Wrote '%s' (HTML_REV=%llu)", htmlPath.toUtf8().constData(), (unsigned long long)g_rev);
-	return true;
+    set_visible(id, !is_visible(id));
 }
 
 bool ensure_output_artifacts_exist()
 {
-	if (!has_output_dir())
-		return false;
+    if (!has_output_dir())
+        return false;
 
-	const QString jsonPath = QString::fromStdString(state_json_path());
-	const QString htmlPath = QString::fromStdString(index_html_path());
+    ensure_dir(output_dir());
 
-	const QFileInfo jfi(jsonPath);
-	if (!jfi.dir().exists())
-		return false;
+    if (!QFile::exists(QString::fromStdString(path_state_json()))) {
+        g_items.clear();
+        save_state_json();
+    }
+    if (!QFile::exists(QString::fromStdString(path_visible_json()))) {
+        g_visible.clear();
+        save_visible_json();
+    }
+    if (!QFile::exists(QString::fromStdString(path_styles_css()))) {
+        write_text_file(path_styles_css(), "/* generated */\n");
+    }
+    if (!QFile::exists(QString::fromStdString(path_scripts_js()))) {
+        write_text_file(path_scripts_js(), "/* generated */\n");
+    }
 
-	bool changed = false;
-
-	if (!QFileInfo::exists(jsonPath)) {
-		if (g_items.empty())
-			g_items.push_back(make_default_cfg());
-		if (g_rev == 0)
-			g_rev = 1;
-
-		if (save_state_json())
-			changed = true;
-	}
-
-	if (!QFileInfo::exists(htmlPath)) {
-		if (write_index_html())
-			changed = true;
-	}
-
-	return changed;
+    return true;
 }
 
-void apply_changes(ApplyMode mode)
+bool load_state_json()
 {
-	if (!has_output_dir())
-		return;
+    if (!has_output_dir())
+        return false;
 
-	(void)mode;
+    const std::string p = path_state_json();
+    if (!QFile::exists(QString::fromStdString(p))) {
+        g_items.clear();
+        return true;
+    }
 
-	ensure_output_artifacts_exist();
-	save_state_json();
+    const std::string txt = read_text_file(p);
+    if (txt.empty()) {
+        g_items.clear();
+        return true;
+    }
+
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(txt), &err);
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        LOGW("Invalid lt-state.json; reset");
+        g_items.clear();
+        return false;
+    }
+
+    const QJsonObject root = doc.object();
+    const QJsonArray items = root.value("items").toArray();
+
+    std::vector<lower_third_cfg> out;
+    out.reserve((size_t)items.size());
+
+    for (const auto &v : items) {
+        if (!v.isObject()) continue;
+        const QJsonObject o = v.toObject();
+
+        lower_third_cfg c;
+        c.id = sanitize_id(o.value("id").toString().toStdString());
+        if (c.id.empty()) c.id = new_id();
+
+        c.title = o.value("title").toString().toStdString();
+        c.subtitle = o.value("subtitle").toString().toStdString();
+        c.profile_picture = o.value("profile_picture").toString().toStdString();
+
+        c.anim_in = o.value("anim_in").toString().toStdString();
+        c.anim_out = o.value("anim_out").toString().toStdString();
+        c.custom_anim_in = o.value("custom_anim_in").toString().toStdString();
+        c.custom_anim_out = o.value("custom_anim_out").toString().toStdString();
+
+        c.font_family = o.value("font_family").toString().toStdString();
+        c.lt_position = o.value("lt_position").toString().toStdString();
+
+        c.bg_color = o.value("bg_color").toString().toStdString();
+        c.text_color = o.value("text_color").toString().toStdString();
+
+        c.html_template = o.value("html_template").toString().toStdString();
+        c.css_template  = o.value("css_template").toString().toStdString();
+        c.js_template   = o.value("js_template").toString().toStdString();
+
+        c.hotkey = o.value("hotkey").toString().toStdString();
+
+        if (c.html_template.empty() || c.css_template.empty()) {
+            auto d = default_cfg();
+            if (c.html_template.empty()) c.html_template = d.html_template;
+            if (c.css_template.empty())  c.css_template  = d.css_template;
+            if (c.js_template.empty())   c.js_template   = d.js_template;
+        }
+
+        if (c.lt_position.empty()) c.lt_position = "lt-pos-bottom-left";
+        if (c.anim_in.empty()) c.anim_in = "animate__fadeInUp";
+        if (c.anim_out.empty()) c.anim_out = "animate__fadeOutDown";
+        if (c.bg_color.empty()) c.bg_color = "#111827";
+        if (c.text_color.empty()) c.text_color = "#F9FAFB";
+
+        out.push_back(std::move(c));
+    }
+
+    g_items = std::move(out);
+    return true;
 }
 
-std::string add_default_lower_third()
+bool save_state_json()
 {
-	LowerThirdConfig cfg = make_default_cfg();
-	g_items.push_back(cfg);
+    if (!has_output_dir())
+        return false;
 
-	bump_struct_rev();
-	apply_changes(ApplyMode::JsonOnly);
+    QJsonObject root;
+    root["version"] = 1;
 
-	return cfg.id;
+    QJsonArray items;
+    for (const auto &c : g_items) {
+        QJsonObject o;
+        o["id"] = QString::fromStdString(c.id);
+        o["title"] = QString::fromStdString(c.title);
+        o["subtitle"] = QString::fromStdString(c.subtitle);
+        o["profile_picture"] = QString::fromStdString(c.profile_picture);
+
+        o["anim_in"] = QString::fromStdString(c.anim_in);
+        o["anim_out"] = QString::fromStdString(c.anim_out);
+        o["custom_anim_in"] = QString::fromStdString(c.custom_anim_in);
+        o["custom_anim_out"] = QString::fromStdString(c.custom_anim_out);
+
+        o["font_family"] = QString::fromStdString(c.font_family);
+        o["lt_position"] = QString::fromStdString(c.lt_position);
+
+        o["bg_color"] = QString::fromStdString(c.bg_color);
+        o["text_color"] = QString::fromStdString(c.text_color);
+
+        o["html_template"] = QString::fromStdString(c.html_template);
+        o["css_template"]  = QString::fromStdString(c.css_template);
+        o["js_template"]   = QString::fromStdString(c.js_template);
+
+        o["hotkey"] = QString::fromStdString(c.hotkey);
+
+        items.append(o);
+    }
+
+    root["items"] = items;
+
+    const QJsonDocument doc(root);
+    return write_text_file(path_state_json(), doc.toJson(QJsonDocument::Indented).toStdString());
 }
 
-std::string clone_lower_third(const std::string &id)
+bool load_visible_json()
 {
-	for (const auto &it : g_items) {
-		if (it.id == id) {
-			LowerThirdConfig copy = it;
-			copy.id = make_new_id();
-			copy.title += " (Copy)";
-			copy.visible = false;
+    if (!has_output_dir())
+        return false;
 
-			g_items.push_back(copy);
+    const std::string p = path_visible_json();
+    if (!QFile::exists(QString::fromStdString(p))) {
+        g_visible.clear();
+        return true;
+    }
 
-			bump_struct_rev();
-			apply_changes(ApplyMode::JsonOnly);
+    const std::string txt = read_text_file(p);
+    if (txt.empty()) {
+        g_visible.clear();
+        return true;
+    }
 
-			return copy.id;
-		}
-	}
-	return {};
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(txt), &err);
+    if (err.error != QJsonParseError::NoError) {
+        LOGW("Invalid lt-visible.json; reset");
+        g_visible.clear();
+        return false;
+    }
+
+    std::vector<std::string> ids;
+    if (doc.isArray()) {
+        const QJsonArray a = doc.array();
+        for (const auto &v : a) {
+            if (v.isString())
+                ids.push_back(sanitize_id(v.toString().toStdString()));
+        }
+    }
+
+    // keep only existing IDs
+    std::vector<std::string> keep;
+    keep.reserve(ids.size());
+    for (const auto &id : ids)
+        if (get_by_id(id))
+            keep.push_back(id);
+
+    g_visible = std::move(keep);
+    return true;
 }
 
-void remove_lower_third(const std::string &id)
+bool save_visible_json()
 {
-	auto it = std::find_if(g_items.begin(), g_items.end(), [&](const LowerThirdConfig &c) { return c.id == id; });
-	if (it != g_items.end()) {
-		g_items.erase(it);
+    if (!has_output_dir())
+        return false;
 
-		bump_struct_rev();
-		apply_changes(ApplyMode::JsonOnly);
-	}
+    std::vector<std::string> ids = g_visible;
+    ids.erase(std::remove_if(ids.begin(), ids.end(), [](const std::string &s){ return s.empty(); }), ids.end());
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+
+    QJsonArray a;
+    for (const auto &id : ids)
+        a.append(QString::fromStdString(id));
+
+    const QJsonDocument doc(a);
+    return write_text_file(path_visible_json(), doc.toJson(QJsonDocument::Indented).toStdString());
 }
 
-void toggle_active(const std::string &id, bool hideOthers)
+bool regenerate_merged_css_js()
 {
-	if (g_items.empty())
-		return;
+    if (!has_output_dir())
+        return false;
 
-	if (!hideOthers) {
-		for (auto &it : g_items) {
-			if (it.id == id) {
-				it.visible = !it.visible;
-				break;
-			}
-		}
-		apply_changes(ApplyMode::JsonOnly);
-		return;
-	}
+    std::string css;
+    css += build_shared_css();
 
-	bool thisVisible = false;
-	bool thisIsOnlyVisible = true;
+    css += R"CSS(
 
-	for (const auto &it : g_items) {
-		if (!it.visible)
-			continue;
+/* Position classes */
+.lt-pos-bottom-left  { left: var(--slt-safe-margin); bottom: var(--slt-safe-margin); }
+.lt-pos-bottom-right { right: var(--slt-safe-margin); bottom: var(--slt-safe-margin); }
+.lt-pos-top-left     { left: var(--slt-safe-margin); top: var(--slt-safe-margin); }
+.lt-pos-top-right    { right: var(--slt-safe-margin); top: var(--slt-safe-margin); }
+.lt-pos-center       { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+)CSS";
 
-		if (it.id == id)
-			thisVisible = true;
-		else
-			thisIsOnlyVisible = false;
-	}
+    css += "\n/* Per-LT scoped styles */\n";
+    for (const auto &c : g_items)
+        css += "\n" + scope_css_best_effort(c);
 
-	if (thisVisible && thisIsOnlyVisible) {
-		for (auto &it : g_items)
-			it.visible = false;
-	} else {
-		for (auto &it : g_items)
-			it.visible = (it.id == id);
-	}
+    if (!write_text_file(path_styles_css(), css)) {
+        LOGW("Failed writing lt-styles.css");
+        return false;
+    }
 
-	apply_changes(ApplyMode::JsonOnly);
+    std::string js;
+    js += build_base_script(g_items);
+    js += "\n\n/* Per-LT scripts */\n";
+    for (const auto &c : g_items)
+        js += build_item_script(c);
+
+    if (!write_text_file(path_scripts_js(), js)) {
+        LOGW("Failed writing lt-scripts.js");
+        return false;
+    }
+
+    return true;
 }
 
-void set_active_exact(const std::string &id)
+std::string generate_timestamp_html()
 {
-	if (g_items.empty())
-		return;
+    if (!has_output_dir())
+        return {};
 
-	if (id.empty()) {
-		for (auto &it : g_items)
-			it.visible = false;
-		apply_changes(ApplyMode::JsonOnly);
-		return;
-	}
+    const std::string fn = "lt-" + now_timestamp_string() + ".html";
+    const std::string abs = join_path(output_dir(), fn);
+    if (!write_text_file(abs, build_full_html()))
+        return {};
+    return abs;
+}
 
-	bool found = false;
-	for (auto &it : g_items) {
-		if (it.id == id) {
-			it.visible = true;
-			found = true;
-		} else {
-			it.visible = false;
-		}
-	}
+// -------------------------
+// Browser source helpers
+// -------------------------
+static obs_source_t *get_browser_by_name()
+{
+    return obs_get_source_by_name(sltBrowserSourceName); // refcounted
+}
 
-	if (!found) {
-		for (auto &it : g_items)
-			it.visible = false;
-	}
+bool swap_browser_source_to_file(const std::string &absoluteHtmlPath)
+{
+    if (absoluteHtmlPath.empty())
+        return false;
 
-	apply_changes(ApplyMode::JsonOnly);
+    obs_source_t *src = get_browser_by_name();
+    if (!src)
+        return false;
+
+    obs_data_t *s = obs_source_get_settings(src);
+    obs_data_set_bool(s, "is_local_file", true);
+    obs_data_set_string(s, "local_file", absoluteHtmlPath.c_str());
+    obs_data_set_bool(s, "smart_lt_managed", true);
+    obs_source_update(src, s);
+
+    obs_data_release(s);
+    obs_source_release(src);
+    return true;
+}
+
+bool ensure_browser_source_in_current_scene()
+{
+    if (!has_output_dir())
+        return false;
+
+    if (obs_source_t *existing = get_browser_by_name()) {
+        obs_source_release(existing);
+        return true;
+    }
+
+    obs_source_t *curSceneSrc = obs_frontend_get_current_scene();
+    if (!curSceneSrc) {
+        LOGW("No current scene");
+        return false;
+    }
+
+    obs_scene_t *scene = obs_scene_from_source(curSceneSrc);
+    if (!scene) {
+        obs_source_release(curSceneSrc);
+        return false;
+    }
+
+    if (g_last_html_path.empty()) {
+        regenerate_merged_css_js();
+        g_last_html_path = generate_timestamp_html();
+    }
+    if (g_last_html_path.empty()) {
+        obs_source_release(curSceneSrc);
+        return false;
+    }
+
+    obs_data_t *settings = obs_data_create();
+    obs_data_set_bool(settings, "is_local_file", true);
+    obs_data_set_string(settings, "local_file", g_last_html_path.c_str());
+    obs_data_set_bool(settings, "smart_lt_managed", true);
+
+    obs_video_info vi{};
+    if (obs_get_video_info(&vi) == 0) {
+        obs_data_set_int(settings, "width", vi.base_width);
+        obs_data_set_int(settings, "height", vi.base_height);
+    } else {
+        obs_data_set_int(settings, "width", sltBrowserWidth);
+        obs_data_set_int(settings, "height", sltBrowserHeight);
+    }
+
+    obs_data_set_bool(settings, "shutdown", false);
+
+    obs_source_t *browser = obs_source_create(sltBrowserSourceId, sltBrowserSourceName, settings, nullptr);
+    obs_data_release(settings);
+
+    if (!browser) {
+        obs_source_release(curSceneSrc);
+        return false;
+    }
+
+    obs_scene_add(scene, browser);
+
+    obs_source_release(browser);
+    obs_source_release(curSceneSrc);
+    return true;
+}
+
+// -------------------------
+// High-level triggers
+// -------------------------
+bool rebuild_and_swap()
+{
+    if (!has_output_dir())
+        return false;
+
+    ensure_output_artifacts_exist();
+    load_state_json();
+    load_visible_json();
+
+    if (!regenerate_merged_css_js())
+        return false;
+
+    const std::string newHtml = generate_timestamp_html();
+    if (newHtml.empty())
+        return false;
+
+    ensure_browser_source_in_current_scene();
+    swap_browser_source_to_file(newHtml);
+
+    delete_old_lt_html_keep(newHtml);
+    g_last_html_path = newHtml;
+    return true;
 }
 
 bool set_output_dir_and_load(const std::string &dir)
 {
-	if (dir.empty())
-		return false;
+    if (dir.empty())
+        return false;
 
-	const bool sameDir = (dir == g_output_dir && has_output_dir());
+    g_output_dir = dir;
+    ensure_dir(output_dir());
 
-	set_output_dir(dir);
+    // Persist for next OBS session (config.json: {"output_dir":"..."})
+    save_global_config();
 
-	const QString qDir = QString::fromStdString(g_output_dir);
-	if (!QDir(qDir).exists()) {
-		LOGW("Selected folder does not exist: '%s'", g_output_dir.c_str());
-		if (g_items.empty())
-			g_items.push_back(make_default_cfg());
-		return false;
-	}
+    ensure_output_artifacts_exist();
+    load_state_json();
+    load_visible_json();
 
-	const QString jsonPath = QString::fromStdString(state_json_path());
-	if (QFileInfo::exists(jsonPath)) {
-		load_state_json();
-	} else {
-		g_items.clear();
-		g_items.push_back(make_default_cfg());
-		g_rev = 1;
-		save_state_json();
-	}
+    // Keep as-is; do not auto-add
+    save_state_json();
+    save_visible_json();
 
-	ensure_output_artifacts_exist();
-
-	if (!sameDir) {
-		bump_struct_rev();
-		save_state_json();
-	}
-
-	repoint_managed_browser_sources(/*reload*/ !sameDir);
-
-	LOGI("Folder active: '%s' (rev=%llu, items=%zu)", g_output_dir.c_str(), (unsigned long long)g_rev,
-	     g_items.size());
-
-	return true;
+    // Output dir change is a rebuild trigger
+    rebuild_and_swap();
+    return true;
 }
 
 void init_from_disk()
 {
-	load_global_config();
+    // Load output_dir from config.json
+    load_global_config();
 
-	if (!g_output_dir.empty()) {
-		set_output_dir_and_load(g_output_dir);
-	} else {
-		if (g_items.empty())
-			g_items.push_back(make_default_cfg());
-		if (g_rev == 0)
-			g_rev = 1;
-	}
+    if (g_output_dir.empty())
+        return;
+
+    ensure_dir(output_dir());
+    ensure_output_artifacts_exist();
+    load_state_json();
+    load_visible_json();
+
+    // Restore latest generated html file and repoint browser source if it exists.
+    g_last_html_path = find_latest_lt_html();
+    if (!g_last_html_path.empty()) {
+        swap_browser_source_to_file(g_last_html_path);
+    }
+}
+
+// -------------------------
+// CRUD helpers (rebuild triggers)
+// -------------------------
+std::string add_default_lower_third()
+{
+    if (!has_output_dir())
+        return {};
+
+    ensure_output_artifacts_exist();
+    load_state_json();
+    load_visible_json();
+
+    lower_third_cfg c = default_cfg();
+    while (get_by_id(c.id))
+        c.id = new_id();
+
+    g_items.push_back(c);
+    set_visible(c.id, true);
+
+    if (!save_state_json())
+        return {};
+    save_visible_json();
+
+    if (!rebuild_and_swap())
+        return {};
+
+    return c.id;
+}
+
+std::string clone_lower_third(const std::string &id)
+{
+    if (!has_output_dir())
+        return {};
+
+    ensure_output_artifacts_exist();
+    load_state_json();
+    load_visible_json();
+
+    const std::string sid = sanitize_id(id);
+    lower_third_cfg *src = get_by_id(sid);
+    if (!src)
+        return {};
+
+    lower_third_cfg c = *src;
+    c.id = new_id();
+    while (get_by_id(c.id))
+        c.id = new_id();
+
+    if (!c.title.empty()) c.title += " (Copy)";
+    else c.title = "Lower Third (Copy)";
+
+    g_items.push_back(c);
+    set_visible(c.id, true);
+
+    if (!save_state_json())
+        return {};
+    save_visible_json();
+
+    if (!rebuild_and_swap())
+        return {};
+
+    return c.id;
+}
+
+bool remove_lower_third(const std::string &id)
+{
+    if (!has_output_dir())
+        return false;
+
+    ensure_output_artifacts_exist();
+    load_state_json();
+    load_visible_json();
+
+    const std::string sid = sanitize_id(id);
+    const auto before = g_items.size();
+
+    g_items.erase(
+        std::remove_if(g_items.begin(), g_items.end(),
+                       [&](const lower_third_cfg &c) { return c.id == sid; }),
+        g_items.end());
+
+    const bool removed = (g_items.size() != before);
+    if (!removed)
+        return false;
+
+    set_visible(sid, false);
+
+    save_state_json();
+    save_visible_json();
+
+    return rebuild_and_swap();
 }
 
 } // namespace smart_lt

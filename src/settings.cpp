@@ -1,12 +1,10 @@
+// settings.cpp
 #define LOG_TAG "[" PLUGIN_NAME "][settings]"
 #include "settings.hpp"
+
 #include "core.hpp"
 
 #include <obs.h>
-#include <obs-frontend-api.h>
-
-#include <unzip.h>
-#include <zip.h>
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -19,11 +17,8 @@
 #include <QPushButton>
 #include <QColorDialog>
 #include <QDialogButtonBox>
-#include <QColor>
 #include <QFontComboBox>
-#include <QFont>
 #include <QKeySequenceEdit>
-#include <QKeySequence>
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
@@ -35,18 +30,25 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QStyle>
+#include <QTabWidget>
+#include <QWidget>
 
-using namespace smart_lt;
+#include <unzip.h>
+#include <zip.h>
 
-static bool unzip_to_dir(const QString &zipPath,
-			 const QString &destDir,
-			 QString &htmlPath,
-			 QString &cssPath,
-			 QString &jsonPath,
-			 QString &profilePath)
+#include <cstring>
+
+namespace smart_lt::ui {
+
+// ----------------------------
+// unzip / zip helpers (kept)
+// ----------------------------
+static bool unzip_to_dir(const QString &zipPath, const QString &destDir, QString &htmlPath, QString &cssPath,
+			 QString &jsPath, QString &jsonPath, QString &profilePath)
 {
 	htmlPath.clear();
 	cssPath.clear();
+	jsPath.clear();
 	jsonPath.clear();
 	profilePath.clear();
 
@@ -96,6 +98,8 @@ static bool unzip_to_dir(const QString &zipPath,
 			htmlPath = outPath;
 		else if (name == "template.css")
 			cssPath = outPath;
+		else if (name == "template.js")
+			jsPath = outPath;
 		else if (name == "template.json")
 			jsonPath = outPath;
 		else if (name.startsWith("profile.") || name.contains("profile", Qt::CaseInsensitive))
@@ -104,23 +108,16 @@ static bool unzip_to_dir(const QString &zipPath,
 	} while (unzGoToNextFile(zip) == UNZ_OK);
 
 	unzClose(zip);
-
 	return (!htmlPath.isEmpty() && !cssPath.isEmpty() && !jsonPath.isEmpty());
 }
 
 static bool zip_write_file(zipFile zf, const char *internalName, const QByteArray &data)
 {
 	zip_fileinfo zi;
-	memset(&zi, 0, sizeof(zi));
+	std::memset(&zi, 0, sizeof(zi));
 
-	const int errOpen = zipOpenNewFileInZip(zf,
-					       internalName,
-					       &zi,
-					       nullptr, 0,
-					       nullptr, 0,
-					       nullptr,
-					       Z_DEFLATED,
-					       Z_BEST_COMPRESSION);
+	const int errOpen = zipOpenNewFileInZip(zf, internalName, &zi, nullptr, 0, nullptr, 0, nullptr, Z_DEFLATED,
+						Z_BEST_COMPRESSION);
 	if (errOpen != ZIP_OK)
 		return false;
 
@@ -136,25 +133,43 @@ static bool zip_write_file(zipFile zf, const char *internalName, const QByteArra
 	return true;
 }
 
+// ----------------------------
+// Dialog
+// ----------------------------
 LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(parent)
 {
 	setWindowTitle(tr("Lower Third Settings"));
-	resize(720, 620);
+	resize(820, 720);
 
 	auto *root = new QVBoxLayout(this);
+	root->setContentsMargins(10, 10, 10, 10);
+	root->setSpacing(10);
 
+	// Content & Media
 	{
 		auto *contentBox = new QGroupBox(tr("Content && Media"), this);
-		auto *contentLayout = new QGridLayout(contentBox);
+		auto *g = new QGridLayout(contentBox);
+		g->setSpacing(8);
 
-		auto *titleLabel = new QLabel(tr("Title:"), this);
+		int row = 0;
+
+		// Row 0: Title
+		g->addWidget(new QLabel(tr("Title:"), this), row, 0);
 		titleEdit = new QLineEdit(this);
+		g->addWidget(titleEdit, row, 1, 1, 3);
 
-		auto *subtitleLabel = new QLabel(tr("Subtitle:"), this);
+		row++;
+		// Row 1: Subtitle
+		g->addWidget(new QLabel(tr("Subtitle:"), this), row, 0);
 		subtitleEdit = new QLineEdit(this);
+		g->addWidget(subtitleEdit, row, 1, 1, 3);
 
-		auto *picLabel = new QLabel(tr("Profile picture:"), this);
+		row++;
+		// Row 2: Profile Picture
+		g->addWidget(new QLabel(tr("Profile picture:"), this), row, 0);
 		auto *picRow = new QHBoxLayout();
+		picRow->setContentsMargins(0, 0, 0, 0);
+
 		profilePictureEdit = new QLineEdit(this);
 		profilePictureEdit->setReadOnly(true);
 
@@ -162,63 +177,60 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		browseProfilePictureBtn->setCursor(Qt::PointingHandCursor);
 		browseProfilePictureBtn->setIcon(style()->standardIcon(QStyle::SP_DirOpenIcon));
 		browseProfilePictureBtn->setToolTip(tr("Browse profile picture..."));
+		browseProfilePictureBtn->setFixedWidth(32);
 
 		picRow->addWidget(profilePictureEdit, 1);
 		picRow->addWidget(browseProfilePictureBtn);
-
-		int row = 0;
-		contentLayout->addWidget(titleLabel, row, 0);
-		contentLayout->addWidget(titleEdit, row, 1, 1, 3);
+		g->addLayout(picRow, row, 1, 1, 3);
 
 		row++;
-		contentLayout->addWidget(subtitleLabel, row, 0);
-		contentLayout->addWidget(subtitleEdit, row, 1, 1, 3);
+		g->addWidget(new QLabel(tr("Hotkey:"), this), row, 0);
 
-		row++;
-		contentLayout->addWidget(picLabel, row, 0);
-		contentLayout->addLayout(picRow, row, 1, 1, 3);
+		auto *hkRow = new QHBoxLayout();
+		hkRow->setContentsMargins(0, 0, 0, 0);
+		hkRow->setSpacing(4);
 
-		contentLayout->setColumnStretch(1, 1);
+		hotkeyEdit = new QKeySequenceEdit(this);
+
+		clearHotkeyBtn = new QPushButton(this);
+		clearHotkeyBtn->setToolTip(tr("Clear hotkey"));
+		clearHotkeyBtn->setCursor(Qt::PointingHandCursor);
+		clearHotkeyBtn->setIcon(style()->standardIcon(QStyle::SP_DialogResetButton));
+		clearHotkeyBtn->setFixedWidth(32);
+		clearHotkeyBtn->setFocusPolicy(Qt::NoFocus);
+
+		hkRow->addWidget(hotkeyEdit, 1);
+		hkRow->addWidget(clearHotkeyBtn);
+		g->addLayout(hkRow, row, 1, 1, 3);
+
 		root->addWidget(contentBox);
 
-		connect(browseProfilePictureBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onBrowseProfilePicture);
+		// Connections
+		connect(clearHotkeyBtn, &QPushButton::clicked, this,
+			[this]() { hotkeyEdit->setKeySequence(QKeySequence()); });
+
+		connect(browseProfilePictureBtn, &QPushButton::clicked, this,
+			&LowerThirdSettingsDialog::onBrowseProfilePicture);
 	}
 
+	// Style
 	{
 		auto *styleBox = new QGroupBox(tr("Style"), this);
-		auto *styleGrid = new QGridLayout(styleBox);
+		auto *g = new QGridLayout(styleBox);
 
-		auto *lblIn = new QLabel(tr("Anim In:"), this);
+		int row = 0;
+
+		g->addWidget(new QLabel(tr("Anim In:"), this), row, 0);
 		animInCombo = new QComboBox(this);
 		for (const auto &opt : AnimInOptions)
 			animInCombo->addItem(tr(opt.label), QString::fromUtf8(opt.value));
+		g->addWidget(animInCombo, row, 1);
 
-		auto *lblOut = new QLabel(tr("Anim Out:"), this);
+		g->addWidget(new QLabel(tr("Anim Out:"), this), row, 2);
 		animOutCombo = new QComboBox(this);
 		for (const auto &opt : AnimOutOptions)
 			animOutCombo->addItem(tr(opt.label), QString::fromUtf8(opt.value));
-
-		auto *lblFont = new QLabel(tr("Font:"), this);
-		fontCombo = new QFontComboBox(this);
-		fontCombo->setEditable(false);
-
-		int row = 0;
-		styleGrid->addWidget(lblIn, row, 0);
-		styleGrid->addWidget(animInCombo, row, 1);
-		styleGrid->addWidget(lblOut, row, 2);
-		styleGrid->addWidget(animOutCombo, row, 3);
-
-		row++;
-		styleGrid->addWidget(lblFont, row, 0);
-		styleGrid->addWidget(fontCombo, row, 1);
-
-		auto *lblPos = new QLabel(tr("Position:"), this);
-		ltPosCombo = new QComboBox(this);
-		for (const auto &opt : LtPositionOptions)
-			ltPosCombo->addItem(tr(opt.label), QString::fromUtf8(opt.value));
-
-		styleGrid->addWidget(lblPos, row, 2);
-		styleGrid->addWidget(ltPosCombo, row, 3);
+		g->addWidget(animOutCombo, row, 3);
 
 		row++;
 		customAnimInLabel = new QLabel(tr("Custom In class:"), this);
@@ -229,146 +241,137 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		customAnimOutEdit = new QLineEdit(this);
 		customAnimOutEdit->setPlaceholderText(tr("e.g. myFadeOut"));
 
-		styleGrid->addWidget(customAnimInLabel, row, 0);
-		styleGrid->addWidget(customAnimInEdit, row, 1);
-		styleGrid->addWidget(customAnimOutLabel, row, 2);
-		styleGrid->addWidget(customAnimOutEdit, row, 3);
+		g->addWidget(customAnimInLabel, row, 0);
+		g->addWidget(customAnimInEdit, row, 1);
+		g->addWidget(customAnimOutLabel, row, 2);
+		g->addWidget(customAnimOutEdit, row, 3);
 
 		row++;
-		auto *lblBg = new QLabel(tr("Background:"), this);
+		g->addWidget(new QLabel(tr("Font:"), this), row, 0);
+		fontCombo = new QFontComboBox(this);
+		fontCombo->setEditable(false);
+		g->addWidget(fontCombo, row, 1);
+
+		g->addWidget(new QLabel(tr("Position:"), this), row, 2);
+		posCombo = new QComboBox(this);
+		for (const auto &opt : LtPositionOptions)
+			posCombo->addItem(tr(opt.label), QString::fromUtf8(opt.value));
+		g->addWidget(posCombo, row, 3);
+
+		row++;
+		g->addWidget(new QLabel(tr("Background:"), this), row, 0);
 		bgColorBtn = new QPushButton(tr("Pick"), this);
+		g->addWidget(bgColorBtn, row, 1);
 
-		auto *lblText = new QLabel(tr("Text color:"), this);
+		g->addWidget(new QLabel(tr("Text color:"), this), row, 2);
 		textColorBtn = new QPushButton(tr("Pick"), this);
-
-		styleGrid->addWidget(lblBg, row, 0);
-		styleGrid->addWidget(bgColorBtn, row, 1);
-		styleGrid->addWidget(lblText, row, 2);
-		styleGrid->addWidget(textColorBtn, row, 3);
+		g->addWidget(textColorBtn, row, 3);
 
 		root->addWidget(styleBox);
 
 		connect(bgColorBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onPickBgColor);
 		connect(textColorBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onPickTextColor);
-		connect(ltPosCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LowerThirdSettingsDialog::onLtPosChanged);
+
+		connect(animInCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+			&LowerThirdSettingsDialog::onAnimInChanged);
+		connect(animOutCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+			&LowerThirdSettingsDialog::onAnimOutChanged);
 	}
 
+	// Templates (with Import/Export)
 	{
-		auto *behaviorBox = new QGroupBox(tr("Behavior"), this);
-		auto *behaviorGrid = new QGridLayout(behaviorBox);
+		auto *tplCard = new QGroupBox(tr("Templates"), this);
+		auto *tplLayout = new QVBoxLayout(tplCard);
 
-		auto *hotkeyLabel = new QLabel(tr("Hotkey:"), this);
-		hotkeyEdit = new QKeySequenceEdit(this);
+		tplTabs = new QTabWidget(this);
+		tplTabs->setDocumentMode(true);
 
-		clearHotkeyBtn = new QPushButton(this);
-		clearHotkeyBtn->setCursor(Qt::PointingHandCursor);
-		clearHotkeyBtn->setFlat(true);
-		clearHotkeyBtn->setIcon(style()->standardIcon(QStyle::SP_DialogResetButton));
-		clearHotkeyBtn->setToolTip(tr("Clear hotkey"));
-		clearHotkeyBtn->setFocusPolicy(Qt::NoFocus);
+		auto makeTab = [&](const QString &name, QPlainTextEdit *&edit) {
+			auto *page = new QWidget(this);
+			auto *v = new QVBoxLayout(page);
+			v->setContentsMargins(0, 0, 0, 0);
 
-		auto *hotkeyRowLayout = new QHBoxLayout();
-		hotkeyRowLayout->addWidget(hotkeyEdit, 1);
-		hotkeyRowLayout->addWidget(clearHotkeyBtn);
+			edit = new QPlainTextEdit(page);
+			edit->setLineWrapMode(QPlainTextEdit::NoWrap);
+			// Set a monospace font for code
+			edit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
 
-		behaviorGrid->addWidget(hotkeyLabel, 0, 0);
-		behaviorGrid->addLayout(hotkeyRowLayout, 0, 1);
+			v->addWidget(edit);
+			tplTabs->addTab(page, name);
+		};
 
-		root->addWidget(behaviorBox);
+		makeTab(tr("HTML"), htmlEdit);
+		makeTab(tr("CSS"), cssEdit);
+		makeTab(tr("JS"), jsEdit);
 
-		connect(clearHotkeyBtn, &QPushButton::clicked, this, [this]() {
-			hotkeyEdit->setKeySequence(QKeySequence());
-			onHotkeyChanged(hotkeyEdit->keySequence());
+		// 1. Create the button
+		auto *expandBtn = new QPushButton(this);
+		expandBtn->setFlat(true);
+		expandBtn->setCursor(Qt::PointingHandCursor);
+		expandBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+		expandBtn->setToolTip(tr("Open editor..."));
+		expandBtn->setFixedSize(32, 28);
+
+		// 2. Simply set it as the Corner Widget of the Tab Bar
+		// Qt handles the absolute positioning in the top-right automatically
+		tplTabs->setCornerWidget(expandBtn, Qt::TopRightCorner);
+
+		// 3. Logic to open the correct editor based on the active tab
+		connect(expandBtn, &QPushButton::clicked, this, [this]() {
+			int idx = tplTabs->currentIndex();
+			if (idx == 0)
+				onOpenHtmlEditorDialog();
+			else if (idx == 1)
+				onOpenCssEditorDialog();
+			else if (idx == 2)
+				onOpenJsEditorDialog();
 		});
+
+		tplLayout->addWidget(tplTabs, 1);
+		root->addWidget(tplCard, 1);
 	}
-
+	
+	// Footer: Import/Export (left) + Cancel / Save&Apply (right)
 	{
-		auto *tplRow = new QHBoxLayout();
-
-		auto *htmlCard = new QGroupBox(tr("HTML Template"), this);
-		auto *htmlLayout = new QVBoxLayout(htmlCard);
-
-		auto *htmlHeaderRow = new QHBoxLayout();
-		expandHtmlBtn = new QPushButton(this);
-		expandHtmlBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
-		expandHtmlBtn->setCursor(Qt::PointingHandCursor);
-		expandHtmlBtn->setToolTip(tr("Open HTML editor..."));
-		expandHtmlBtn->setFlat(true);
-
-		htmlHeaderRow->addStretch(1);
-		htmlHeaderRow->addWidget(expandHtmlBtn);
-		htmlLayout->addLayout(htmlHeaderRow);
-
-		htmlEdit = new QPlainTextEdit(this);
-		htmlLayout->addWidget(htmlEdit, 1);
-
-		connect(expandHtmlBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onOpenHtmlEditorDialog);
-
-		tplRow->addWidget(htmlCard, 1);
-
-		auto *cssCard = new QGroupBox(tr("CSS Template"), this);
-		auto *cssLayout = new QVBoxLayout(cssCard);
-
-		auto *cssHeaderRow = new QHBoxLayout();
-		expandCssBtn = new QPushButton(this);
-		expandCssBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
-		expandCssBtn->setCursor(Qt::PointingHandCursor);
-		expandCssBtn->setToolTip(tr("Open CSS editor..."));
-		expandCssBtn->setFlat(true);
-
-		cssHeaderRow->addStretch(1);
-		cssHeaderRow->addWidget(expandCssBtn);
-		cssLayout->addLayout(cssHeaderRow);
-
-		cssEdit = new QPlainTextEdit(this);
-		cssLayout->addWidget(cssEdit, 1);
-
-		connect(expandCssBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onOpenCssEditorDialog);
-
-		tplRow->addWidget(cssCard, 1);
-
-		root->addLayout(tplRow, 1);
-	}
-
-	{
-		buttonBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
-		auto *applyBtn = buttonBox->addButton(tr("Save && Apply"), QDialogButtonBox::AcceptRole);
-
-		connect(buttonBox, &QDialogButtonBox::accepted, this, &LowerThirdSettingsDialog::onSaveAndApply);
-		connect(buttonBox, &QDialogButtonBox::rejected, this, &LowerThirdSettingsDialog::reject);
-		connect(applyBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onSaveAndApply);
-
-		auto *bottomRow = new QHBoxLayout();
+		auto *footer = new QHBoxLayout();
+		footer->setContentsMargins(0, 0, 0, 0);
+		footer->setSpacing(8);
 
 		importBtn = new QPushButton(this);
 		importBtn->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
 		importBtn->setCursor(Qt::PointingHandCursor);
 		importBtn->setToolTip(tr("Import template from ZIP..."));
+		importBtn->setText(tr("Import"));
 
 		exportBtn = new QPushButton(this);
 		exportBtn->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
 		exportBtn->setCursor(Qt::PointingHandCursor);
 		exportBtn->setToolTip(tr("Export template to ZIP..."));
+		exportBtn->setText(tr("Export"));
 
-		bottomRow->addWidget(importBtn);
-		bottomRow->addWidget(exportBtn);
-		bottomRow->addStretch(1);
-		bottomRow->addWidget(buttonBox);
+		footer->addWidget(importBtn);
+		footer->addWidget(exportBtn);
+		footer->addStretch(1);
 
-		root->addLayout(bottomRow);
+		buttonBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+		auto *applyBtn = buttonBox->addButton(tr("Save && Apply"), QDialogButtonBox::AcceptRole);
+
+		footer->addWidget(buttonBox);
+
+		root->addLayout(footer);
 
 		connect(importBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onImportTemplateClicked);
 		connect(exportBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onExportTemplateClicked);
+
+		connect(buttonBox, &QDialogButtonBox::rejected, this, &LowerThirdSettingsDialog::reject);
+		connect(buttonBox, &QDialogButtonBox::accepted, this, &LowerThirdSettingsDialog::onSaveAndApply);
+		connect(applyBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onSaveAndApply);
 	}
 
-	connect(animInCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LowerThirdSettingsDialog::onAnimInChanged);
-	connect(animOutCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LowerThirdSettingsDialog::onAnimOutChanged);
-
-	connect(customAnimInEdit, &QLineEdit::textChanged, this, [this](const QString &) { updateCustomAnimFieldsVisibility(); });
-	connect(customAnimOutEdit, &QLineEdit::textChanged, this, [this](const QString &) { updateCustomAnimFieldsVisibility(); });
-
-	connect(fontCombo, &QFontComboBox::currentFontChanged, this, &LowerThirdSettingsDialog::onFontChanged);
-	connect(hotkeyEdit, &QKeySequenceEdit::keySequenceChanged, this, &LowerThirdSettingsDialog::onHotkeyChanged);
+	connect(customAnimInEdit, &QLineEdit::textChanged, this,
+		[this](const QString &) { updateCustomAnimFieldsVisibility(); });
+	connect(customAnimOutEdit, &QLineEdit::textChanged, this,
+		[this](const QString &) { updateCustomAnimFieldsVisibility(); });
 
 	updateCustomAnimFieldsVisibility();
 }
@@ -397,32 +400,36 @@ void LowerThirdSettingsDialog::loadFromState()
 	titleEdit->setText(QString::fromStdString(cfg->title));
 	subtitleEdit->setText(QString::fromStdString(cfg->subtitle));
 
-	{
-		const QString v = QString::fromStdString(cfg->anim_in);
-		const int idx = animInCombo->findData(v);
-		animInCombo->setCurrentIndex(idx >= 0 ? idx : 0);
-	}
-	{
-		const QString v = QString::fromStdString(cfg->anim_out);
-		const int idx = animOutCombo->findData(v);
-		animOutCombo->setCurrentIndex(idx >= 0 ? idx : 0);
-	}
+	auto setCombo = [](QComboBox *cb, const QString &v) {
+		const int idx = cb->findData(v);
+		cb->setCurrentIndex(idx >= 0 ? idx : 0);
+	};
+
+	setCombo(animInCombo, QString::fromStdString(cfg->anim_in));
+	setCombo(animOutCombo, QString::fromStdString(cfg->anim_out));
 
 	customAnimInEdit->setText(QString::fromStdString(cfg->custom_anim_in));
 	customAnimOutEdit->setText(QString::fromStdString(cfg->custom_anim_out));
-	updateCustomAnimFieldsVisibility();
 
 	if (!cfg->font_family.empty())
 		fontCombo->setCurrentFont(QFont(QString::fromStdString(cfg->font_family)));
+
+	setCombo(posCombo, QString::fromStdString(cfg->lt_position));
 
 	hotkeyEdit->setKeySequence(QKeySequence(QString::fromStdString(cfg->hotkey)));
 
 	htmlEdit->setPlainText(QString::fromStdString(cfg->html_template));
 	cssEdit->setPlainText(QString::fromStdString(cfg->css_template));
+	jsEdit->setPlainText(QString::fromStdString(cfg->js_template));
+
+	if (cfg->profile_picture.empty())
+		profilePictureEdit->clear();
+	else
+		profilePictureEdit->setText(QString::fromStdString(cfg->profile_picture));
 
 	delete currentBgColor;
-	delete currentTextColor;
 	currentBgColor = nullptr;
+	delete currentTextColor;
 	currentTextColor = nullptr;
 
 	QColor bg(QString::fromStdString(cfg->bg_color));
@@ -435,21 +442,11 @@ void LowerThirdSettingsDialog::loadFromState()
 	currentBgColor = new QColor(bg);
 	currentTextColor = new QColor(fg);
 
-	updateColorButton(bgColorBtn, *currentBgColor);
-	updateColorButton(textColorBtn, *currentTextColor);
-
-	{
-		const QString v = QString::fromStdString(cfg->lt_position);
-		const int idx = ltPosCombo->findData(v);
-		ltPosCombo->setCurrentIndex(idx >= 0 ? idx : 0);
-	}
-
-	if (cfg->profile_picture.empty())
-		profilePictureEdit->clear();
-	else
-		profilePictureEdit->setText(QString::fromStdString(cfg->profile_picture));
+	updateColorButton(bgColorBtn, bg);
+	updateColorButton(textColorBtn, fg);
 
 	pendingProfilePicturePath.clear();
+	updateCustomAnimFieldsVisibility();
 }
 
 void LowerThirdSettingsDialog::saveToState()
@@ -470,18 +467,20 @@ void LowerThirdSettingsDialog::saveToState()
 	cfg->custom_anim_out = customAnimOutEdit->text().toStdString();
 
 	cfg->font_family = fontCombo->currentFont().family().toStdString();
-	cfg->hotkey = hotkeyEdit->keySequence().toString(QKeySequence::PortableText).toStdString();
-
-	cfg->lt_position = ltPosCombo->currentData().toString().toStdString();
+	cfg->lt_position = posCombo->currentData().toString().toStdString();
 
 	if (currentBgColor)
 		cfg->bg_color = currentBgColor->name(QColor::HexRgb).toStdString();
 	if (currentTextColor)
 		cfg->text_color = currentTextColor->name(QColor::HexRgb).toStdString();
 
+	cfg->hotkey = hotkeyEdit->keySequence().toString(QKeySequence::PortableText).toStdString();
+
 	cfg->html_template = htmlEdit->toPlainText().toStdString();
 	cfg->css_template = cssEdit->toPlainText().toStdString();
+	cfg->js_template = jsEdit->toPlainText().toStdString();
 
+	// Copy profile picture into output dir
 	if (!pendingProfilePicturePath.isEmpty() && smart_lt::has_output_dir()) {
 		const QString outDir = QString::fromStdString(smart_lt::output_dir());
 		QDir dir(outDir);
@@ -494,13 +493,14 @@ void LowerThirdSettingsDialog::saveToState()
 
 		const QFileInfo fi(pendingProfilePicturePath);
 		const QString ext = fi.suffix().toLower();
-		const qint64 ts = QDateTime::currentSecsSinceEpoch();
+		const qint64 ts = QDateTime::currentMSecsSinceEpoch();
 
 		QString newFileName = QString("%1_%2").arg(QString::fromStdString(cfg->id)).arg(ts);
 		if (!ext.isEmpty())
 			newFileName += "." + ext;
 
 		const QString destPath = dir.filePath(newFileName);
+		QFile::remove(destPath);
 
 		if (QFile::copy(pendingProfilePicturePath, destPath)) {
 			cfg->profile_picture = newFileName.toStdString();
@@ -513,7 +513,28 @@ void LowerThirdSettingsDialog::saveToState()
 		pendingProfilePicturePath.clear();
 	}
 
-	smart_lt::apply_changes(smart_lt::ApplyMode::JsonOnly);
+	smart_lt::save_state_json();
+}
+
+void LowerThirdSettingsDialog::onSaveAndApply()
+{
+	saveToState();
+
+	// Save & Apply is a rewrite trigger
+	smart_lt::rebuild_and_swap();
+
+	accept();
+}
+
+void LowerThirdSettingsDialog::onBrowseProfilePicture()
+{
+	const QString filter = tr("Images (*.png *.jpg *.jpeg *.webp *.gif);;All Files (*.*)");
+	const QString file = QFileDialog::getOpenFileName(this, tr("Select profile picture"), QString(), filter);
+	if (file.isEmpty())
+		return;
+
+	pendingProfilePicturePath = file;
+	profilePictureEdit->setText(file);
 }
 
 void LowerThirdSettingsDialog::onPickBgColor()
@@ -546,134 +567,164 @@ void LowerThirdSettingsDialog::onPickTextColor()
 	updateColorButton(textColorBtn, c);
 }
 
-void LowerThirdSettingsDialog::onBrowseProfilePicture()
+void LowerThirdSettingsDialog::updateCustomAnimFieldsVisibility()
 {
-	const QString filter = tr("Images (*.png *.jpg *.jpeg *.webp *.gif);;All Files (*.*)");
-	const QString file = QFileDialog::getOpenFileName(this, tr("Select profile picture"), QString(), filter);
-	if (file.isEmpty())
+	const QString key = QStringLiteral("custom");
+	const bool inCustom = (animInCombo->currentData().toString() == key);
+	const bool outCustom = (animOutCombo->currentData().toString() == key);
+
+	customAnimInLabel->setVisible(inCustom);
+	customAnimInEdit->setVisible(inCustom);
+
+	customAnimOutLabel->setVisible(outCustom);
+	customAnimOutEdit->setVisible(outCustom);
+}
+
+void LowerThirdSettingsDialog::onAnimInChanged(int)
+{
+	updateCustomAnimFieldsVisibility();
+}
+void LowerThirdSettingsDialog::onAnimOutChanged(int)
+{
+	updateCustomAnimFieldsVisibility();
+}
+
+void LowerThirdSettingsDialog::updateColorButton(QPushButton *btn, const QColor &c)
+{
+	const QString hex = c.name(QColor::HexRgb);
+	btn->setStyleSheet(
+		QString("background-color:%1;border:1px solid rgba(255,255,255,0.20);border-radius:8px;padding:6px 10px;min-width:90px;")
+			.arg(hex));
+	btn->setText(hex);
+}
+
+void LowerThirdSettingsDialog::openTemplateEditorDialog(const QString &title, QPlainTextEdit *sourceEdit)
+{
+	if (!sourceEdit)
 		return;
 
-	pendingProfilePicturePath = file;
-	profilePictureEdit->setText(file);
+	QDialog dlg(this);
+	dlg.setWindowTitle(title);
+	dlg.resize(980, 760);
+
+	auto *layout = new QVBoxLayout(&dlg);
+	auto *big = new QPlainTextEdit(&dlg);
+	big->setPlainText(sourceEdit->toPlainText());
+	big->setLineWrapMode(QPlainTextEdit::NoWrap);
+
+	auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dlg);
+	layout->addWidget(big, 1);
+	layout->addWidget(box);
+
+	connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+	if (dlg.exec() == QDialog::Accepted)
+		sourceEdit->setPlainText(big->toPlainText());
 }
 
-void LowerThirdSettingsDialog::onSaveAndApply()
+void LowerThirdSettingsDialog::onOpenHtmlEditorDialog()
 {
-	saveToState();
-	accept();
+	openTemplateEditorDialog(tr("Edit HTML Template"), htmlEdit);
+}
+void LowerThirdSettingsDialog::onOpenCssEditorDialog()
+{
+	openTemplateEditorDialog(tr("Edit CSS Template"), cssEdit);
+}
+void LowerThirdSettingsDialog::onOpenJsEditorDialog()
+{
+	openTemplateEditorDialog(tr("Edit JS Template"), jsEdit);
 }
 
+// ----------------------------
+// Import / Export template ZIP
+// ----------------------------
 void LowerThirdSettingsDialog::onExportTemplateClicked()
 {
 	if (currentId.isEmpty()) {
-		QMessageBox::warning(this, tr("Export"), tr("No lower third selected to export."));
+		QMessageBox::warning(this, tr("Export"), tr("No lower third selected."));
 		return;
 	}
-
-	saveToState();
 
 	auto *cfg = smart_lt::get_by_id(currentId.toStdString());
-	if (!cfg) {
-		QMessageBox::warning(this, tr("Export"), tr("Cannot find current lower third configuration."));
-		return;
-	}
-
-	const QString suggestedName = QString::fromStdString(cfg->id) + "-template.zip";
-	const QString zipPath = QFileDialog::getSaveFileName(this,
-							    tr("Export Template"),
-							    suggestedName,
-							    tr("Template ZIP (*.zip)"));
-
-	if (zipPath.isEmpty())
+	if (!cfg)
 		return;
 
-	zipFile zf = zipOpen(zipPath.toUtf8().constData(), 0);
+	const QString outZip = QFileDialog::getSaveFileName(
+		this, tr("Export template ZIP"), QString("slt-template-%1.zip").arg(QString::fromStdString(cfg->id)),
+		tr("Template ZIP (*.zip)"));
+	if (outZip.isEmpty())
+		return;
+
+	zipFile zf = zipOpen(outZip.toUtf8().constData(), APPEND_STATUS_CREATE);
 	if (!zf) {
-		QMessageBox::warning(this, tr("Export"), tr("Failed to create ZIP file."));
+		QMessageBox::warning(this, tr("Export"), tr("Cannot create ZIP file."));
 		return;
 	}
 
-	QJsonObject obj;
-	obj["id"] = QString::fromStdString(cfg->id);
-	obj["title"] = QString::fromStdString(cfg->title);
-	obj["subtitle"] = QString::fromStdString(cfg->subtitle);
-	obj["anim_in"] = QString::fromStdString(cfg->anim_in);
-	obj["anim_out"] = QString::fromStdString(cfg->anim_out);
-	obj["custom_anim_in"] = QString::fromStdString(cfg->custom_anim_in);
-	obj["custom_anim_out"] = QString::fromStdString(cfg->custom_anim_out);
-	obj["font_family"] = QString::fromStdString(cfg->font_family);
-	obj["lt_position"] = QString::fromStdString(cfg->lt_position);
-	obj["bg_color"] = QString::fromStdString(cfg->bg_color);
-	obj["text_color"] = QString::fromStdString(cfg->text_color);
-	obj["visible"] = cfg->visible;
-	obj["hotkey"] = QString::fromStdString(cfg->hotkey);
-	obj["profile_picture"] = QString::fromStdString(cfg->profile_picture);
+	// template.html/css/js are editor content (not merged files)
+	const QByteArray html = htmlEdit->toPlainText().toUtf8();
+	const QByteArray css = cssEdit->toPlainText().toUtf8();
+	const QByteArray js = jsEdit->toPlainText().toUtf8();
 
-	const QJsonDocument jsonDoc(obj);
-	const QByteArray jsonBytes = jsonDoc.toJson(QJsonDocument::Indented);
-	if (!zip_write_file(zf, "template.json", jsonBytes)) {
-		zipClose(zf, nullptr);
-		QMessageBox::warning(this, tr("Export"), tr("Failed to write template.json to ZIP."));
-		return;
-	}
+	// template.json
+	QJsonObject o;
+	o["title"] = QString::fromStdString(cfg->title);
+	o["subtitle"] = QString::fromStdString(cfg->subtitle);
+	o["anim_in"] = QString::fromStdString(cfg->anim_in);
+	o["anim_out"] = QString::fromStdString(cfg->anim_out);
+	o["custom_anim_in"] = QString::fromStdString(cfg->custom_anim_in);
+	o["custom_anim_out"] = QString::fromStdString(cfg->custom_anim_out);
+	o["font_family"] = QString::fromStdString(cfg->font_family);
+	o["lt_position"] = QString::fromStdString(cfg->lt_position);
+	o["bg_color"] = QString::fromStdString(cfg->bg_color);
+	o["text_color"] = QString::fromStdString(cfg->text_color);
+	o["hotkey"] = QString::fromStdString(cfg->hotkey);
 
-	const QByteArray htmlBytes = QString::fromStdString(cfg->html_template).toUtf8();
-	if (!zip_write_file(zf, "template.html", htmlBytes)) {
-		zipClose(zf, nullptr);
-		QMessageBox::warning(this, tr("Export"), tr("Failed to write template.html to ZIP."));
-		return;
-	}
+	const QByteArray json = QJsonDocument(o).toJson(QJsonDocument::Indented);
 
-	const QByteArray cssBytes = QString::fromStdString(cfg->css_template).toUtf8();
-	if (!zip_write_file(zf, "template.css", cssBytes)) {
-		zipClose(zf, nullptr);
-		QMessageBox::warning(this, tr("Export"), tr("Failed to write template.css to ZIP."));
-		return;
-	}
+	bool ok = true;
+	ok = ok && zip_write_file(zf, "template.html", html);
+	ok = ok && zip_write_file(zf, "template.css", css);
+	ok = ok && zip_write_file(zf, "template.js", js);
+	ok = ok && zip_write_file(zf, "template.json", json);
 
-	if (!cfg->profile_picture.empty() && smart_lt::has_output_dir()) {
-		const QString outDir = QString::fromStdString(smart_lt::output_dir());
-		QDir dir(outDir);
+	// profile picture (optional) from output folder
+	if (ok && smart_lt::has_output_dir() && !cfg->profile_picture.empty()) {
+		const QString picPath = QDir(QString::fromStdString(smart_lt::output_dir()))
+						.filePath(QString::fromStdString(cfg->profile_picture));
+		QFile f(picPath);
+		if (f.open(QIODevice::ReadOnly)) {
+			const QByteArray picData = f.readAll();
+			f.close();
 
-		const QString picFileName = QString::fromStdString(cfg->profile_picture);
-		const QString srcPath = dir.filePath(picFileName);
-
-		if (QFile::exists(srcPath)) {
-			QFile picFile(srcPath);
-			if (picFile.open(QIODevice::ReadOnly)) {
-				const QByteArray picBytes = picFile.readAll();
-				const QString ext = QFileInfo(picFileName).suffix().toLower();
-				const QString internalName = ext.isEmpty()
-					? QStringLiteral("profile")
-					: QStringLiteral("profile.%1").arg(ext);
-
-				if (!zip_write_file(zf, internalName.toUtf8().constData(), picBytes)) {
-					zipClose(zf, nullptr);
-					QMessageBox::warning(this, tr("Export"), tr("Failed to add profile picture to ZIP."));
-					return;
-				}
-			}
+			const QString ext = QFileInfo(picPath).suffix().toLower();
+			const QString internal = ext.isEmpty() ? "profile" : QString("profile.%1").arg(ext);
+			ok = ok && zip_write_file(zf, internal.toUtf8().constData(), picData);
 		}
 	}
 
 	zipClose(zf, nullptr);
+
+	if (!ok) {
+		QMessageBox::warning(this, tr("Export"), tr("Failed to write one or more files into ZIP."));
+		return;
+	}
+
 	QMessageBox::information(this, tr("Export"), tr("Template exported successfully."));
 }
 
 void LowerThirdSettingsDialog::onImportTemplateClicked()
 {
-	const QString zipPath = QFileDialog::getOpenFileName(this,
-							    tr("Select template ZIP"),
-							    QString(),
-							    tr("Template ZIP (*.zip)"));
-
-	if (zipPath.isEmpty())
-		return;
-
 	if (currentId.isEmpty()) {
-		QMessageBox::warning(this, tr("Import"), tr("No lower third selected to import into."));
+		QMessageBox::warning(this, tr("Import"), tr("No lower third selected."));
 		return;
 	}
+
+	const QString zipPath =
+		QFileDialog::getOpenFileName(this, tr("Select template ZIP"), QString(), tr("Template ZIP (*.zip)"));
+	if (zipPath.isEmpty())
+		return;
 
 	QTemporaryDir tempDir;
 	if (!tempDir.isValid()) {
@@ -681,8 +732,8 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 		return;
 	}
 
-	QString htmlPath, cssPath, jsonPath, profilePicPath;
-	if (!unzip_to_dir(zipPath, tempDir.path(), htmlPath, cssPath, jsonPath, profilePicPath)) {
+	QString htmlPath, cssPath, jsPath, jsonPath, profilePicPath;
+	if (!unzip_to_dir(zipPath, tempDir.path(), htmlPath, cssPath, jsPath, jsonPath, profilePicPath)) {
 		QMessageBox::warning(this, tr("Error"),
 				     tr("ZIP must contain template.html, template.css and template.json."));
 		return;
@@ -717,20 +768,31 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 	cfg->lt_position = obj.value("lt_position").toString().toStdString();
 	cfg->bg_color = obj.value("bg_color").toString().toStdString();
 	cfg->text_color = obj.value("text_color").toString().toStdString();
-	cfg->visible = obj.value("visible").toBool(false);
 	cfg->hotkey = obj.value("hotkey").toString().toStdString();
 
 	{
-		QFile f1(htmlPath);
-		if (f1.open(QIODevice::ReadOnly))
-			cfg->html_template = QString::fromUtf8(f1.readAll()).toStdString();
+		QFile f(htmlPath);
+		if (f.open(QIODevice::ReadOnly))
+			cfg->html_template = QString::fromUtf8(f.readAll()).toStdString();
 	}
 	{
-		QFile f2(cssPath);
-		if (f2.open(QIODevice::ReadOnly))
-			cfg->css_template = QString::fromUtf8(f2.readAll()).toStdString();
+		QFile f(cssPath);
+		if (f.open(QIODevice::ReadOnly))
+			cfg->css_template = QString::fromUtf8(f.readAll()).toStdString();
+	}
+	{
+		if (!jsPath.isEmpty()) {
+			QFile f(jsPath);
+			if (f.open(QIODevice::ReadOnly))
+				cfg->js_template = QString::fromUtf8(f.readAll()).toStdString();
+			else
+				cfg->js_template.clear();
+		} else {
+			cfg->js_template.clear();
+		}
 	}
 
+	// Import profile picture into output dir
 	if (!profilePicPath.isEmpty() && smart_lt::has_output_dir()) {
 		const QString outDir = QString::fromStdString(smart_lt::output_dir());
 		if (!outDir.isEmpty()) {
@@ -743,9 +805,9 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 			}
 
 			const QString ext = QFileInfo(profilePicPath).suffix().toLower();
-			const QString newName = ext.isEmpty()
-				? QString("%1_profile").arg(QString::fromStdString(cfg->id))
-				: QString("%1_profile.%2").arg(QString::fromStdString(cfg->id)).arg(ext);
+			const QString newName =
+				ext.isEmpty() ? QString("%1_profile").arg(QString::fromStdString(cfg->id))
+					      : QString("%1_profile.%2").arg(QString::fromStdString(cfg->id)).arg(ext);
 
 			const QString dest = dir.filePath(newName);
 			QFile::remove(dest);
@@ -756,105 +818,14 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 		}
 	}
 
-	smart_lt::apply_changes(smart_lt::ApplyMode::JsonOnly);
+	smart_lt::save_state_json();
+
+	// Import changes should not immediately rebuild unless user clicks Save&Apply.
+	// But user expectation for import is "applies to editor" now; so we refresh UI fields.
 	loadFromState();
-	QMessageBox::information(this, tr("Imported"), tr("Template imported successfully."));
+
+	QMessageBox::information(this, tr("Imported"),
+				 tr("Template imported successfully. Click 'Save & Apply' to rebuild files."));
 }
 
-void LowerThirdSettingsDialog::openTemplateEditorDialog(const QString &title, QPlainTextEdit *sourceEdit)
-{
-	if (!sourceEdit)
-		return;
-
-	QDialog dlg(this);
-	dlg.setWindowTitle(title);
-	dlg.resize(900, 700);
-
-	auto *layout = new QVBoxLayout(&dlg);
-	auto *bigEdit = new QPlainTextEdit(&dlg);
-
-	bigEdit->setPlainText(sourceEdit->toPlainText());
-	bigEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
-
-	QFont monoFont = bigEdit->font();
-#if defined(Q_OS_WIN)
-	monoFont.setFamily(QStringLiteral("Consolas"));
-#elif defined(Q_OS_MACOS)
-	monoFont.setFamily(QStringLiteral("Menlo"));
-#else
-	monoFont.setFamily(QStringLiteral("Monospace"));
-#endif
-	bigEdit->setFont(monoFont);
-
-	auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dlg);
-
-	layout->addWidget(bigEdit, 1);
-	layout->addWidget(box);
-
-	connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-	connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-	if (dlg.exec() == QDialog::Accepted)
-		sourceEdit->setPlainText(bigEdit->toPlainText());
-}
-
-void LowerThirdSettingsDialog::onOpenHtmlEditorDialog()
-{
-	openTemplateEditorDialog(tr("Edit HTML Template"), htmlEdit);
-}
-
-void LowerThirdSettingsDialog::onOpenCssEditorDialog()
-{
-	openTemplateEditorDialog(tr("Edit CSS Template"), cssEdit);
-}
-
-void LowerThirdSettingsDialog::updateCustomAnimFieldsVisibility()
-{
-	const QString customKey = QStringLiteral("custom");
-
-	const bool inCustom = (animInCombo->currentData().toString() == customKey);
-	const bool outCustom = (animOutCombo->currentData().toString() == customKey);
-
-	customAnimInLabel->setVisible(inCustom);
-	customAnimInEdit->setVisible(inCustom);
-	customAnimOutLabel->setVisible(outCustom);
-	customAnimOutEdit->setVisible(outCustom);
-}
-
-void LowerThirdSettingsDialog::onAnimInChanged(int)
-{
-	updateCustomAnimFieldsVisibility();
-}
-
-void LowerThirdSettingsDialog::onAnimOutChanged(int)
-{
-	updateCustomAnimFieldsVisibility();
-}
-
-void LowerThirdSettingsDialog::onFontChanged(const QFont &)
-{
-	// Font change is persisted on Save; no immediate apply here.
-	// If you want immediate apply w/out rev bump, uncomment:
-	// saveToState();
-}
-
-void LowerThirdSettingsDialog::onHotkeyChanged(const QKeySequence &)
-{
-	// Hotkey change is persisted on Save; no immediate apply here.
-	// If you want immediate apply w/out rev bump, uncomment:
-	// saveToState();
-}
-
-void LowerThirdSettingsDialog::onLtPosChanged(int)
-{
-	// Position change is persisted on Save; no immediate apply here.
-	// If you want immediate apply w/out rev bump, uncomment:
-	// saveToState();
-}
-
-void LowerThirdSettingsDialog::updateColorButton(QPushButton *btn, const QColor &color)
-{
-	const QString hex = color.name(QColor::HexRgb);
-	btn->setStyleSheet(QString("background-color:%1;border:1px solid #333;min-width:64px;padding:2px 4px;").arg(hex));
-	btn->setText(hex);
-}
+} // namespace smart_lt::ui

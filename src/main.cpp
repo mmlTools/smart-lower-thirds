@@ -22,7 +22,6 @@ MODULE_EXPORT const char *obs_module_description(void)
 bool obs_module_load(void)
 {
 	LOGI("Plugin loaded (version %s)", PLUGIN_VERSION);
-	smart_lt::init_from_disk();
 	LowerThird_create_dock();
 	return true;
 }
