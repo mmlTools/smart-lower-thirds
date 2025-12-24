@@ -118,6 +118,13 @@ find_package(libobs REQUIRED)
 # Frontend API (REQUIRED)
 find_package(obs-frontend-api REQUIRED)
 
+if(APPLE)
+  target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
+    $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-error=quoted-include-in-framework-header>
+    $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-quoted-include-in-framework-header>
+  )
+endif()
+
 # ---------------------------------------------------------------------------
 # Qt (dock & dialogs) – REQUIRED
 # ---------------------------------------------------------------------------
