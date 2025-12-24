@@ -746,12 +746,12 @@
                                 <div class="hero-eyebrow">
                                     <span class="tag">Updated</span>
                                     Local file workflow + timed automation
-                                    </div>
+                                </div>
 
                                 <h1 class="hero-title">
                                     Unlimited, <span class="highlight">smart lower thirds</span> for professional
                                     streams.
-                                    </h1>
+                                </h1>
 
                                 <p class="hero-subtitle">
                                     Smart Lower Thirds lets you create and control lower thirds directly in OBS Studio
@@ -759,7 +759,7 @@
                                     hotkeys, importable templates, and optional timed auto-triggers. The overlay is
                                     loaded from local files no
                                     local webserver required.
-                                    </p>
+                                </p>
 
                                 <div class="hero-badges">
                                     <div class="badge"><span class="badge-dot"></span> OBS Studio Plugin</div>
@@ -776,37 +776,37 @@
                                     </a>
                                     <a class="btn btn-ghost" href="#install">⚙️ Quick Install</a>
                                     <a class="btn btn-ghost" href="#video">▶ Watch Demo</a>
-                                    </div>
+                                </div>
 
                                 <p class="hero-footnote">
                                     Built for <span>streamers</span>, <span>content creators</span>, and <span>broadcast
                                         studios</span>.
                                 </p>
-                                </div>
-                                
-                                <!-- Structured “Update notice” lives in hero left so it doesn't feel random -->
-                                <div class="hero-callouts">
-                                    <div class="card card-callout" id="update-notice">
-                                        <div class="callout-row">
-                                            <div class="callout-icon">!</div>
-                                            <div class="callout-body">
-                                                <h3 style="margin:0 0 0.35rem; font-size:1rem;">Updating from an older
-                                                    version?</h3>
-                                                <p>
-                                                    Smart Lower Thirds no longer uses a built-in local webserver and no
-                                                    longer supports <strong>scene binding</strong>.
-                                                    The overlay is now loaded as a <strong>local file</strong> in an OBS
-                                                    Browser Source, and lower thirds are triggered
-                                                    via dock controls, hotkeys, or timed automation.
-                                                </p>
-                                                <p style="margin:0;">
-                                                    Migration checklist: replace any <code>http://127.0.0.1:....</code>
-                                                    URLs, update templates to the new placeholders,
-                                                    and review the install steps below.
-                                                </p>
-                                            </div>
+                            </div>
+                            
+                            <!-- Structured “Update notice” lives in hero left so it doesn't feel random -->
+                            <div class="hero-callouts">
+                                <div class="card card-callout" id="update-notice">
+                                    <div class="callout-row">
+                                        <div class="callout-icon">!</div>
+                                        <div class="callout-body">
+                                            <h3 style="margin:0 0 0.35rem; font-size:1rem;">Updating from an older
+                                                version?</h3>
+                                            <p>
+                                                Smart Lower Thirds no longer uses a built-in local webserver and no
+                                                longer supports <strong>scene binding</strong>.
+                                                The overlay is now loaded as a <strong>local file</strong> in an OBS
+                                                Browser Source, and lower thirds are triggered
+                                                via dock controls, hotkeys, or timed automation.
+                                            </p>
+                                            <p style="margin:0;">
+                                                Migration checklist: replace any <code>http://127.0.0.1:....</code>
+                                                URLs, update templates to the new placeholders,
+                                                and review the install steps below.
+                                            </p>
                                         </div>
                                     </div>
+                                </div>
                             </div>
                         </div>
 
@@ -817,21 +817,22 @@
                                     <span><strong>Presentation</strong> · See the workflow inside OBS Studio</span>
                                     <span style="font-size:0.72rem; color:#9ca3af;">YouTube · Demo</span>
                                 </div>
-<!-- Replace VIDEO_ID with your YouTube ID -->
-<div class="video-embed" id="video">
-    <div class="ratio">
-        <iframe src="https://www.youtube-nocookie.com/embed/VIDEO_ID" title="Smart Lower Thirds - Demo"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowfullscreen></iframe>
-    </div>
-    <div class="video-caption">
-        <div><strong>Tip:</strong> Use this video in your release notes and README.
-        </div>
-        <div>Prefer screenshots? Scroll down.</div>
-    </div>
-</div>
-</div>
-</div>
+                                <!-- Replace VIDEO_ID with your YouTube ID -->
+                                <div class="video-embed" id="video">
+                                    <div class="ratio">
+                                        <iframe width="560" height="315" src="https://www.youtube.com/embed/AunKJCyrSmM?si=BMbtyXgfzxCMtJEx"
+                                            title="YouTube video player" frameborder="0"
+                                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                            referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                                    </div>
+                                    <div class="video-caption">
+                                        <div><strong>Tip:</strong> Use this video in your release notes and README.
+                                        </div>
+                                        <div>Prefer screenshots? Scroll down.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div><!-- /hero-grid -->
                 </div>
             </section>
@@ -940,7 +941,7 @@
                                 Smart Lower Thirds uses OBS Studio’s Browser Source with a <strong>local file</strong>
                                 path.
                                 This keeps setup simple and avoids background services.
-                                </p>
+                            </p>
 
                             <div class="card">
                                 <h3>Local file setup (recommended)</h3>
@@ -948,18 +949,18 @@
                                     Create a Browser Source in OBS and point it to the plugin’s overlay HTML file (local
                                     file).
                                     Your lower thirds are rendered inside that page using your templates and settings.
-                                    </p>
-                                    <ul class="feature-list">
+                                </p>
+                                <ul class="feature-list">
                                     <li>No localhost URLs</li>
                                     <li>No ports or firewalls</li>
                                     <li>Easy to move between machines with your assets</li>
-                                    </ul>
+                                </ul>
                                 <p style="margin-bottom:0;">
                                     If you are migrating from an older version, review the update notice in the hero
                                     section before replacing your Browser Source settings.
                                 </p>
                             </div>
-                            </div>
+                        </div>
 
                         <div class="dock-settings-wrapper">
                             <div class="card">
@@ -974,7 +975,7 @@
                                 <p>Configure styling, animations, and timed behavior per lower third.</p>
                                 <img src="settings-dialog.png" alt="Smart Lower Thirds settings dialog screenshot"
                                     style="border-radius: 12px; width: 100%;" />
-                                </div>
+                            </div>
                             </div>
                     </div>
                 </div>
@@ -1006,8 +1007,8 @@
                                         <tr>
                                             <td><code>{{ID}}</code></td>
                                             <td>Unique instance ID (useful for per-item CSS targeting)</td>
-                                            </tr>
-                                            <tr>
+                                        </tr>
+                                        <tr>
                                             <td><code>{{TITLE}}</code></td>
                                             <td>Main line (name, topic, headline)</td>
                                         </tr>
@@ -1115,10 +1116,10 @@
                                 <li>Create your first lower third, then trigger it via the dock, hotkeys, or timed
                                     automation.</li>
                             </ol>
-<p style="margin-top:0.8rem; margin-bottom:0;">
-    Updating from an older version? Jump to the <a href="#update-notice"
-        style="text-decoration:underline; color:#93c5fd;">update notice</a>.
-</p>
+                            <p style="margin-top:0.8rem; margin-bottom:0;">
+                                Updating from an older version? Jump to the <a href="#update-notice"
+                                    style="text-decoration:underline; color:#93c5fd;">update notice</a>.
+                            </p>
                         </div>
                     </div>
                 </div>
