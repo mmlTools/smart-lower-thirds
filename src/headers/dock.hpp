@@ -1,25 +1,31 @@
+// dock.hpp
 #pragma once
 
 #include <QWidget>
-#include <QString>
 #include <QVector>
+#include <QHash>
+#include <QSet>
 
-class QPushButton;
 class QScrollArea;
 class QVBoxLayout;
 class QLineEdit;
-class QCheckBox;
-class QLabel;
+class QPushButton;
 class QFrame;
-class QSpinBox;
+class QLabel;
+class QCheckBox;
 class QShortcut;
+class QEvent;
+class QTimer;
+
+namespace smart_lt::ui {
 
 struct LowerThirdRowUi {
 	QString id;
-	QWidget *row = nullptr;
-	QCheckBox *visibleCheck = nullptr;
-	QLabel *thumbnailLbl = nullptr;
+	QFrame *row = nullptr;
 	QLabel *labelLbl = nullptr;
+	QLabel *subLbl = nullptr;
+	QLabel *thumbnailLbl = nullptr;
+	QCheckBox *visibleCheck = nullptr;
 	QPushButton *cloneBtn = nullptr;
 	QPushButton *settingsBtn = nullptr;
 	QPushButton *removeBtn = nullptr;
@@ -30,49 +36,57 @@ class LowerThirdDock : public QWidget {
 public:
 	explicit LowerThirdDock(QWidget *parent = nullptr);
 	bool init();
-	void updateFromState();
 
 signals:
 	void requestSave();
 
-protected:
-	bool eventFilter(QObject *obj, QEvent *event) override;
-
 private slots:
-	void onAddLowerThird();
 	void onBrowseOutputFolder();
-	void onToggleServer();
+	void onEnsureBrowserSourceClicked();
+	void onAddLowerThird();
 
 private:
+	static QString formatCountdownMs(qint64 ms);
+	void updateRowCountdowns();
+	void updateRowCountdownFor(const LowerThirdRowUi &rowUi);
+
 	void rebuildList();
 	void updateRowActiveStyles();
-	void handleToggleVisible(const QString &id, bool hideOthers = true);
-	void handleClone(const QString &id);
-	void handleOpenSettings(const QString &id);
-	void handleRemove(const QString &id);
 
 	void clearShortcuts();
 	void rebuildShortcuts();
 
-	void updateServerUi();
+	void handleToggleVisible(const QString &id);
+	void handleClone(const QString &id);
+	void handleOpenSettings(const QString &id);
+	void handleRemove(const QString &id);
+
+	void ensureRepeatTimerStarted();
+	void repeatTick();
+
+protected:
+	bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
 	QLineEdit *outputPathEdit = nullptr;
 	QPushButton *outputBrowseBtn = nullptr;
-
-	QFrame *serverStatusDot = nullptr;
-	QSpinBox *serverPortSpin = nullptr;
-	QPushButton *serverToggleBtn = nullptr;
-
+	QPushButton *ensureSourceBtn = nullptr;
 	QPushButton *addBtn = nullptr;
+
 	QScrollArea *scrollArea = nullptr;
 	QWidget *listContainer = nullptr;
 	QVBoxLayout *listLayout = nullptr;
 
 	QVector<LowerThirdRowUi> rows;
 	QVector<QShortcut *> shortcuts_;
+
+	QTimer *repeatTimer_ = nullptr;
+	QHash<QString, qint64> nextOnMs_;
+	QHash<QString, qint64> offAtMs_;
 };
+
+} // namespace smart_lt::ui
 
 void LowerThird_create_dock();
 void LowerThird_destroy_dock();
-LowerThirdDock *LowerThird_get_dock();
+smart_lt::ui::LowerThirdDock *LowerThird_get_dock();
