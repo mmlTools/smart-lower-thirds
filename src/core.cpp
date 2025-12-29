@@ -555,7 +555,7 @@ std::string path_scripts_js()
 	return has_output_dir() ? join_path(g_output_dir, "lt-scripts.js") : "";
 }
 
-static std::string path_animate_css()
+std::string path_animate_css()
 {
 	return has_output_dir() ? join_path(g_output_dir, "animate.min.css") : "";
 }
