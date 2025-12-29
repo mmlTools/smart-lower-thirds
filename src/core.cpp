@@ -102,6 +102,11 @@ static void delete_old_lt_html_keep(const std::string &keepAbsPath)
 	}
 }
 
+static bool file_exists(const std::string &path)
+{
+	return QFileInfo(QString::fromStdString(path)).exists();
+}
+
 // -------------------------
 // OBS module config.json (output_dir)
 // -------------------------
@@ -482,7 +487,14 @@ static std::string build_full_html()
 	html += "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\"/>\n";
 	html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n";
 	html += "<link rel=\"stylesheet\" href=\"./lt-styles.css\"/>\n";
-	html += "<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css\">\n";
+	const std::string animateLocalAbs = path_animate_css();
+	if (!animateLocalAbs.empty() && file_exists(animateLocalAbs)) {
+		LOGI("Using local animate.min.css");
+		html += "<link rel=\"stylesheet\" href=\"./animate.min.css\"/>\n";
+	} else {
+		LOGI("Using CDN animate.css (local animate.min.css not found)");
+		html += "<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css\"/>\n";
+	}
 	html += "</head>\n<body>\n<ul id=\"slt-root\">\n";
 
 	for (const auto &c : g_items) {
@@ -541,6 +553,11 @@ std::string path_styles_css()
 std::string path_scripts_js()
 {
 	return has_output_dir() ? join_path(g_output_dir, "lt-scripts.js") : "";
+}
+
+std::string path_animate_css()
+{
+	return has_output_dir() ? join_path(g_output_dir, "animate.min.css") : "";
 }
 
 std::string now_timestamp_string()
