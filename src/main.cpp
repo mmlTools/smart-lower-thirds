@@ -7,6 +7,8 @@
 #include <obs-module.h>
 #include <obs.h>
 
+#include <QTimer>
+
 OBS_DECLARE_MODULE();
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
@@ -32,6 +34,10 @@ bool obs_module_load(void)
 void obs_module_post_load(void)
 {
 	smart_lt::ws::init();
+	if (auto *dock = LowerThird_get_dock()) {
+		QTimer::singleShot(250, dock, [dock]() { dock->refreshBrowserSources(); });
+		QTimer::singleShot(1000, dock, [dock]() { dock->refreshBrowserSources(); });
+	}
 }
 
 void obs_module_unload(void)

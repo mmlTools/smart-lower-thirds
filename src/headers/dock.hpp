@@ -16,6 +16,7 @@ class QCheckBox;
 class QShortcut;
 class QEvent;
 class QTimer;
+class QComboBox;
 
 namespace smart_lt::ui {
 
@@ -36,13 +37,13 @@ class LowerThirdDock : public QWidget {
 public:
 	explicit LowerThirdDock(QWidget *parent = nullptr);
 	bool init();
+	void refreshBrowserSources();
 
 signals:
 	void requestSave();
 
 private slots:
 	void onBrowseOutputFolder();
-	void onEnsureBrowserSourceClicked();
 	void onAddLowerThird();
 
 private:
@@ -64,13 +65,23 @@ private:
 	void ensureRepeatTimerStarted();
 	void repeatTick();
 
+	// NEW: combo-box workflow
+	void populateBrowserSources(bool keepSelection = true);
+	void onBrowserSourceChanged(int index);
+
 protected:
 	bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+	// Resources row
 	QLineEdit *outputPathEdit = nullptr;
 	QPushButton *outputBrowseBtn = nullptr;
-	QPushButton *ensureSourceBtn = nullptr;
+
+	// NEW: Browser Source selector row
+	QComboBox *browserSourceCombo = nullptr;
+	QPushButton *refreshSourcesBtn = nullptr;
+
+	// Add
 	QPushButton *addBtn = nullptr;
 
 	QScrollArea *scrollArea = nullptr;
@@ -84,10 +95,14 @@ private:
 	QHash<QString, qint64> nextOnMs_;
 	QHash<QString, qint64> offAtMs_;
 	qint64 lastVisibleMtimeMs_ = 0;
+
+	// Helps avoid recursive signals while repopulating
+	bool populatingSources_ = false;
 };
 
 } // namespace smart_lt::ui
 
 void LowerThird_create_dock();
 void LowerThird_destroy_dock();
+
 smart_lt::ui::LowerThirdDock *LowerThird_get_dock();

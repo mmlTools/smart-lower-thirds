@@ -15,11 +15,16 @@
 #include <QJsonObject>
 #include <QJsonArray>
 
-#include <obs-frontend-api.h>
+#include <obs.h>
+#include <obs-module.h>
 
 namespace smart_lt {
 
+// -------------------------
+// Globals
+// -------------------------
 static std::string g_output_dir;
+static std::string g_target_browser_source; // NEW: user-selected Browser Source name (combo)
 static std::vector<lower_third_cfg> g_items;
 static std::vector<std::string> g_visible;
 static std::string g_last_html_path;
@@ -108,7 +113,7 @@ static bool file_exists(const std::string &path)
 }
 
 // -------------------------
-// OBS module config.json (output_dir)
+// OBS module config.json (output_dir + target browser source)
 // -------------------------
 static std::string module_config_path_cached()
 {
@@ -147,10 +152,17 @@ static void load_global_config()
 		return;
 
 	const QJsonObject root = doc.object();
+
 	const QString out = root.value("output_dir").toString().trimmed();
 	if (!out.isEmpty()) {
 		g_output_dir = out.toStdString();
 		LOGI("Loaded output_dir: '%s'", g_output_dir.c_str());
+	}
+
+	const QString tgt = root.value("target_browser_source").toString().trimmed();
+	if (!tgt.isEmpty()) {
+		g_target_browser_source = tgt.toStdString();
+		LOGI("Loaded target_browser_source: '%s'", g_target_browser_source.c_str());
 	}
 }
 
@@ -165,6 +177,7 @@ bool save_global_config()
 
 	QJsonObject root;
 	root["output_dir"] = QString::fromStdString(g_output_dir);
+	root["target_browser_source"] = QString::fromStdString(g_target_browser_source);
 
 	const QJsonDocument doc(root);
 	return write_text_file(pathS, doc.toJson(QJsonDocument::Compact).toStdString());
@@ -487,6 +500,7 @@ static std::string build_full_html()
 	html += "<!doctype html>\n<html>\n<head>\n<meta charset=\"utf-8\"/>\n";
 	html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n";
 	html += "<link rel=\"stylesheet\" href=\"./lt-styles.css\"/>\n";
+
 	const std::string animateLocalAbs = path_animate_css();
 	if (!animateLocalAbs.empty() && file_exists(animateLocalAbs)) {
 		LOGI("Using local animate.min.css");
@@ -495,6 +509,7 @@ static std::string build_full_html()
 		LOGI("Using CDN animate.css (local animate.min.css not found)");
 		html += "<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css\"/>\n";
 	}
+
 	html += "</head>\n<body>\n<ul id=\"slt-root\">\n";
 
 	for (const auto &c : g_items) {
@@ -906,21 +921,94 @@ std::string generate_timestamp_html()
 }
 
 // -------------------------
-// Browser source helpers
+// Browser source helpers (combo-box workflow)
 // -------------------------
-static obs_source_t *get_browser_by_name()
+
+static obs_source_t *get_target_browser_source()
 {
-	return obs_get_source_by_name(sltBrowserSourceName);
+	if (g_target_browser_source.empty())
+		return nullptr;
+
+	// Returns with refcount +1
+	return obs_get_source_by_name(g_target_browser_source.c_str());
 }
 
-bool swap_browser_source_to_file(const std::string &absoluteHtmlPath)
+std::vector<std::string> list_browser_source_names()
+{
+	std::vector<std::string> out;
+
+	auto enum_cb = [](void *param, obs_source_t *src) -> bool {
+		if (!src)
+			return true;
+
+		const char *id = obs_source_get_id(src);
+		if (!id)
+			return true;
+
+		if (std::string(id) != sltBrowserSourceId)
+			return true;
+
+		const char *name = obs_source_get_name(src);
+		if (name && *name) {
+			auto *vec = static_cast<std::vector<std::string> *>(param);
+			vec->push_back(std::string(name));
+		}
+		return true;
+	};
+
+	obs_enum_sources(enum_cb, &out);
+
+	std::sort(out.begin(), out.end());
+	out.erase(std::unique(out.begin(), out.end()), out.end());
+	return out;
+}
+
+std::string target_browser_source_name()
+{
+	return g_target_browser_source;
+}
+
+bool set_target_browser_source_name(const std::string &name)
+{
+	g_target_browser_source = name;
+	return save_global_config();
+}
+
+bool target_browser_source_exists()
+{
+	obs_source_t *src = get_target_browser_source();
+	if (!src)
+		return false;
+
+	// Defensive: ensure the selection is still a Browser Source
+	const char *id = obs_source_get_id(src);
+	const bool ok = (id && std::string(id) == sltBrowserSourceId);
+
+	obs_source_release(src);
+	return ok;
+}
+
+bool swap_target_browser_source_to_file(const std::string &absoluteHtmlPath)
 {
 	if (absoluteHtmlPath.empty())
 		return false;
 
-	obs_source_t *src = get_browser_by_name();
-	if (!src)
+	obs_source_t *src = get_target_browser_source();
+	if (!src) {
+		if (g_target_browser_source.empty())
+			LOGW("No target Browser Source selected.");
+		else
+			LOGW("Target Browser Source '%s' not found.", g_target_browser_source.c_str());
 		return false;
+	}
+
+	// Defensive: ensure it's still a browser source
+	const char *id = obs_source_get_id(src);
+	if (!id || std::string(id) != sltBrowserSourceId) {
+		LOGW("Target source '%s' is not a Browser Source.", g_target_browser_source.c_str());
+		obs_source_release(src);
+		return false;
+	}
 
 	obs_data_t *s = obs_source_get_settings(src);
 	obs_data_set_bool(s, "is_local_file", true);
@@ -930,68 +1018,6 @@ bool swap_browser_source_to_file(const std::string &absoluteHtmlPath)
 
 	obs_data_release(s);
 	obs_source_release(src);
-	return true;
-}
-
-bool ensure_browser_source_in_current_scene()
-{
-	if (!has_output_dir())
-		return false;
-
-	if (obs_source_t *existing = get_browser_by_name()) {
-		obs_source_release(existing);
-		return true;
-	}
-
-	obs_source_t *curSceneSrc = obs_frontend_get_current_scene();
-	if (!curSceneSrc) {
-		LOGW("No current scene");
-		return false;
-	}
-
-	obs_scene_t *scene = obs_scene_from_source(curSceneSrc);
-	if (!scene) {
-		obs_source_release(curSceneSrc);
-		return false;
-	}
-
-	if (g_last_html_path.empty()) {
-		regenerate_merged_css_js();
-		g_last_html_path = generate_timestamp_html();
-	}
-	if (g_last_html_path.empty()) {
-		obs_source_release(curSceneSrc);
-		return false;
-	}
-
-	obs_data_t *settings = obs_data_create();
-	obs_data_set_bool(settings, "is_local_file", true);
-	obs_data_set_string(settings, "local_file", g_last_html_path.c_str());
-	obs_data_set_bool(settings, "smart_lt_managed", true);
-
-	obs_video_info vi{};
-	if (obs_get_video_info(&vi) == 0) {
-		obs_data_set_int(settings, "width", vi.base_width);
-		obs_data_set_int(settings, "height", vi.base_height);
-	} else {
-		obs_data_set_int(settings, "width", sltBrowserWidth);
-		obs_data_set_int(settings, "height", sltBrowserHeight);
-	}
-
-	obs_data_set_bool(settings, "shutdown", false);
-
-	obs_source_t *browser = obs_source_create(sltBrowserSourceId, sltBrowserSourceName, settings, nullptr);
-	obs_data_release(settings);
-
-	if (!browser) {
-		obs_source_release(curSceneSrc);
-		return false;
-	}
-
-	obs_scene_add(scene, browser);
-
-	obs_source_release(browser);
-	obs_source_release(curSceneSrc);
 	return true;
 }
 
@@ -1014,8 +1040,18 @@ bool rebuild_and_swap()
 	if (newHtml.empty())
 		return false;
 
-	ensure_browser_source_in_current_scene();
-	swap_browser_source_to_file(newHtml);
+	// NEW: combo-box workflow
+	// Only swap if user selected an existing Browser Source
+	if (target_browser_source_exists()) {
+		swap_target_browser_source_to_file(newHtml);
+	} else {
+		if (g_target_browser_source.empty()) {
+			LOGW("Rebuilt artifacts but did not swap: no target Browser Source selected.");
+		} else {
+			LOGW("Rebuilt artifacts but did not swap: target Browser Source '%s' missing or not a Browser Source.",
+			     g_target_browser_source.c_str());
+		}
+	}
 
 	delete_old_lt_html_keep(newHtml);
 	g_last_html_path = newHtml;
@@ -1057,7 +1093,15 @@ void init_from_disk()
 
 	g_last_html_path = find_latest_lt_html();
 	if (!g_last_html_path.empty()) {
-		swap_browser_source_to_file(g_last_html_path);
+		// NEW: swap only if target is valid
+		if (target_browser_source_exists()) {
+			swap_target_browser_source_to_file(g_last_html_path);
+		} else {
+			if (!g_target_browser_source.empty()) {
+				LOGW("Saved target Browser Source '%s' not found (startup swap skipped).",
+				     g_target_browser_source.c_str());
+			}
+		}
 	}
 }
 

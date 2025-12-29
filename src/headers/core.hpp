@@ -108,8 +108,11 @@ bool rebuild_and_swap();
 // -------------------------
 // Browser source
 // -------------------------
-bool ensure_browser_source_in_current_scene();
-bool swap_browser_source_to_file(const std::string &absoluteHtmlPath);
+std::vector<std::string> list_browser_source_names();
+std::string target_browser_source_name();
+bool set_target_browser_source_name(const std::string &name);
+bool target_browser_source_exists();
+bool swap_target_browser_source_to_file(const std::string &absoluteHtmlPath);
 
 // -------------------------
 // Paths

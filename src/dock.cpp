@@ -28,6 +28,8 @@
 #include <QSizePolicy>
 #include <QTimer>
 #include <QDateTime>
+#include <QComboBox>
+#include <QFileInfo>
 
 static QWidget *g_dockWidget = nullptr;
 
@@ -64,7 +66,9 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 
 	auto *st = style();
 
-	// Top row
+	// -------------------------
+	// Top row: Resources (output dir)
+	// -------------------------
 	{
 		auto *row = new QHBoxLayout();
 		row->setSpacing(6);
@@ -80,28 +84,53 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 		outputBrowseBtn->setFlat(true);
 		outputBrowseBtn->setIcon(st->standardIcon(QStyle::SP_DirOpenIcon));
 
-		ensureSourceBtn = new QPushButton(this);
-		ensureSourceBtn->setCursor(Qt::PointingHandCursor);
-		ensureSourceBtn->setToolTip(tr("Add/Ensure Browser Source in current scene"));
-		ensureSourceBtn->setFlat(true);
-
-		QIcon globe = QIcon::fromTheme(QStringLiteral("internet-web-browser"));
-		if (globe.isNull())
-			globe = st->standardIcon(QStyle::SP_BrowserReload);
-		ensureSourceBtn->setIcon(globe);
-
 		row->addWidget(lbl);
 		row->addWidget(outputPathEdit, 1);
 		row->addWidget(outputBrowseBtn);
-		row->addWidget(ensureSourceBtn);
 
 		rootLayout->addLayout(row);
 
 		connect(outputBrowseBtn, &QPushButton::clicked, this, &LowerThirdDock::onBrowseOutputFolder);
-		connect(ensureSourceBtn, &QPushButton::clicked, this, &LowerThirdDock::onEnsureBrowserSourceClicked);
 	}
 
+	// -------------------------
+	// NEW: Browser Source selector row (combo-only workflow)
+	// -------------------------
+	{
+		auto *row = new QHBoxLayout();
+		row->setSpacing(6);
+
+		auto *lbl = new QLabel(tr("Browser Source:"), this);
+
+		browserSourceCombo = new QComboBox(this);
+		browserSourceCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		browserSourceCombo->setToolTip(
+			tr("Select an existing OBS Browser Source that will display and control Smart Lower Thirds"));
+
+		refreshSourcesBtn = new QPushButton(this);
+		refreshSourcesBtn->setCursor(Qt::PointingHandCursor);
+		refreshSourcesBtn->setToolTip(tr("Refresh list"));
+		refreshSourcesBtn->setFlat(true);
+
+		QIcon refresh = QIcon::fromTheme(QStringLiteral("view-refresh"));
+		if (refresh.isNull())
+			refresh = st->standardIcon(QStyle::SP_BrowserReload);
+		refreshSourcesBtn->setIcon(refresh);
+
+		row->addWidget(lbl);
+		row->addWidget(browserSourceCombo, 1);
+		row->addWidget(refreshSourcesBtn);
+
+		rootLayout->addLayout(row);
+
+		connect(refreshSourcesBtn, &QPushButton::clicked, this, [this]() { populateBrowserSources(true); });
+		connect(browserSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+			&LowerThirdDock::onBrowserSourceChanged);
+	}
+
+	// -------------------------
 	// List
+	// -------------------------
 	scrollArea = new QScrollArea(this);
 	scrollArea->setObjectName(QStringLiteral("LowerThirdContent"));
 	scrollArea->setWidgetResizable(true);
@@ -115,7 +144,9 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 	scrollArea->setWidget(listContainer);
 	rootLayout->addWidget(scrollArea, 1);
 
+	// -------------------------
 	// Add button
+	// -------------------------
 	{
 		auto *row = new QHBoxLayout();
 		row->setSpacing(6);
@@ -142,13 +173,14 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 
 	const bool hasDir = smart_lt::has_output_dir();
 	addBtn->setEnabled(hasDir);
-	ensureSourceBtn->setEnabled(hasDir);
+	if (browserSourceCombo)
+		browserSourceCombo->setEnabled(true);
+	if (refreshSourcesBtn)
+		refreshSourcesBtn->setEnabled(true);
 }
 
 bool LowerThirdDock::init()
 {
-	//smart_lt::init_from_disk();
-
 	if (smart_lt::has_output_dir())
 		outputPathEdit->setText(QString::fromStdString(smart_lt::output_dir()));
 	else
@@ -156,10 +188,12 @@ bool LowerThirdDock::init()
 
 	const bool hasDir = smart_lt::has_output_dir();
 	addBtn->setEnabled(hasDir);
-	ensureSourceBtn->setEnabled(hasDir);
 
 	if (hasDir)
 		smart_lt::ensure_output_artifacts_exist();
+
+	// Populate browser sources from OBS + restore selection from core config
+	populateBrowserSources(true);
 
 	rebuildList();
 
@@ -173,10 +207,87 @@ bool LowerThirdDock::init()
 	}
 
 	ensureRepeatTimerStarted();
-
 	return true;
 }
 
+// -------------------------
+// NEW: Browser Source selector helpers
+// -------------------------
+void LowerThirdDock::populateBrowserSources(bool keepSelection)
+{
+	if (!browserSourceCombo)
+		return;
+
+	populatingSources_ = true;
+	browserSourceCombo->blockSignals(true);
+
+	const QString previous = keepSelection ? browserSourceCombo->currentData().toString() : QString();
+	const QString saved = QString::fromStdString(smart_lt::target_browser_source_name());
+
+	browserSourceCombo->clear();
+
+	// Placeholder / None
+	browserSourceCombo->addItem(tr("— Select a Browser Source —"), QVariant(QString()));
+
+	const auto names = smart_lt::list_browser_source_names();
+	for (const auto &n : names) {
+		const QString qn = QString::fromStdString(n);
+		browserSourceCombo->addItem(qn, QVariant(qn));
+	}
+
+	// Choose selection priority:
+	// 1) keep current selection if still present
+	// 2) saved selection from config if present
+	// 3) placeholder
+	int idxToSelect = 0;
+
+	auto findByData = [this](const QString &val) -> int {
+		if (val.isEmpty())
+			return 0;
+		for (int i = 0; i < browserSourceCombo->count(); ++i) {
+			if (browserSourceCombo->itemData(i).toString() == val)
+				return i;
+		}
+		return 0;
+	};
+
+	if (!previous.isEmpty())
+		idxToSelect = findByData(previous);
+
+	if (idxToSelect == 0 && !saved.isEmpty())
+		idxToSelect = findByData(saved);
+
+	browserSourceCombo->setCurrentIndex(idxToSelect);
+
+	browserSourceCombo->blockSignals(false);
+	populatingSources_ = false;
+}
+
+void LowerThirdDock::onBrowserSourceChanged(int index)
+{
+	if (populatingSources_)
+		return;
+
+	if (!browserSourceCombo || index < 0)
+		return;
+
+	const QString name = browserSourceCombo->itemData(index).toString();
+
+	// Persist selection (empty = none)
+	smart_lt::set_target_browser_source_name(name.toStdString());
+
+	// If user selected something real and we have an output dir,
+	// rebuild/swap once so it immediately points to the latest generated HTML.
+	if (!name.isEmpty() && smart_lt::has_output_dir()) {
+		smart_lt::rebuild_and_swap();
+	}
+
+	emit requestSave();
+}
+
+// -------------------------
+// Repeat timer (unchanged)
+// -------------------------
 void LowerThirdDock::ensureRepeatTimerStarted()
 {
 	if (repeatTimer_)
@@ -197,10 +308,7 @@ void LowerThirdDock::repeatTick()
 
 	const qint64 now = QDateTime::currentMSecsSinceEpoch();
 
-	// ------------------------------------------------------------
-	// 1) Sync dock state with remote changes (obs-websocket toggles)
-	//    by watching lt-visible.json mtime.
-	// ------------------------------------------------------------
+	// Sync dock with remote changes by watching lt-visible.json mtime.
 	{
 		const QString p = QString::fromStdString(smart_lt::path_visible_json());
 		const QFileInfo fi(p);
@@ -214,11 +322,6 @@ void LowerThirdDock::repeatTick()
 			updateRowCountdowns();
 		}
 	}
-
-	// If settings can change repeat values while dock is open, ensure core memory is current.
-	// If your settings dialog already updates core memory, this is still safe (and cheap).
-	// If you prefer, remove it and guarantee core state is always in sync.
-	// smart_lt::load_state_json();
 
 	bool changed = false;
 	const auto &items = smart_lt::all();
@@ -299,6 +402,9 @@ void LowerThirdDock::repeatTick()
 	updateRowCountdowns();
 }
 
+// -------------------------
+// Actions
+// -------------------------
 void LowerThirdDock::onBrowseOutputFolder()
 {
 	const QString dir = QFileDialog::getExistingDirectory(this, tr("Select Output Folder"));
@@ -307,7 +413,7 @@ void LowerThirdDock::onBrowseOutputFolder()
 
 	smart_lt::set_output_dir_and_load(dir.toStdString());
 
-	// Reset schedules on output path change to avoid weird countdowns
+	// Reset schedules on output path change
 	nextOnMs_.clear();
 	offAtMs_.clear();
 
@@ -315,22 +421,13 @@ void LowerThirdDock::onBrowseOutputFolder()
 
 	const bool hasDir = smart_lt::has_output_dir();
 	addBtn->setEnabled(hasDir);
-	ensureSourceBtn->setEnabled(hasDir);
+
+	// Also refresh sources list (helpful if user created sources while dock was closed)
+	populateBrowserSources(true);
 
 	rebuildList();
 	updateRowCountdowns();
 	emit requestSave();
-}
-
-void LowerThirdDock::onEnsureBrowserSourceClicked()
-{
-	if (!smart_lt::has_output_dir()) {
-		LOGW("Cannot ensure browser source: output dir not set");
-		return;
-	}
-
-	smart_lt::ensure_output_artifacts_exist();
-	smart_lt::ensure_browser_source_in_current_scene();
 }
 
 void LowerThirdDock::onAddLowerThird()
@@ -347,6 +444,9 @@ void LowerThirdDock::onAddLowerThird()
 	emit requestSave();
 }
 
+// -------------------------
+// List rendering (mostly unchanged)
+// -------------------------
 void LowerThirdDock::rebuildList()
 {
 	for (auto &row : rows) {
@@ -404,13 +504,11 @@ void LowerThirdDock::rebuildList()
 		labelColLayout->setContentsMargins(0, 0, 0, 0);
 		labelColLayout->setSpacing(0);
 
-		// Title
 		auto *label = new QLabel(QString::fromStdString(cfg.title), labelCol);
 		label->setObjectName(QStringLiteral("sltRowLabel"));
 		label->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
 		label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-		// Sub label (countdown/status)
 		auto *sub = new QLabel(labelCol);
 		sub->setObjectName(QStringLiteral("sltRowSubLabel"));
 		sub->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
@@ -603,9 +701,6 @@ void LowerThirdDock::handleOpenSettings(const QString &id)
 	dlg.setLowerThirdId(id);
 	dlg.exec();
 
-	// If settings writes to disk and core doesn't refresh memory
-	// smart_lt::load_state_json();
-
 	rebuildList();
 	updateRowCountdowns();
 	emit requestSave();
@@ -691,6 +786,11 @@ void LowerThirdDock::updateRowCountdowns()
 		updateRowCountdownFor(r);
 }
 
+void LowerThirdDock::refreshBrowserSources()
+{
+	populateBrowserSources(true);
+}
+
 } // namespace smart_lt::ui
 
 void LowerThird_create_dock()
@@ -721,10 +821,6 @@ void LowerThird_destroy_dock()
 #else
 	obs_frontend_remove_dock(g_dockWidget);
 #endif
-
-	// In some OBS builds, removing the dock does not delete the widget.
-	// If observe timers still firing after removal, uncomment:
-	// g_dockWidget->deleteLater();
 
 	g_dockWidget = nullptr;
 	LOGI("Dock destroyed");
