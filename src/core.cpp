@@ -1102,11 +1102,44 @@ bool regenerate_merged_css_js()
 	css += R"CSS(
 
 /* Position classes */
-.lt-pos-bottom-left  { left: var(--slt-safe-margin); bottom: var(--slt-safe-margin); }
-.lt-pos-bottom-right { right: var(--slt-safe-margin); bottom: var(--slt-safe-margin); }
-.lt-pos-top-left     { left: var(--slt-safe-margin); top: var(--slt-safe-margin); }
-.lt-pos-top-right    { right: var(--slt-safe-margin); top: var(--slt-safe-margin); }
-.lt-pos-center       { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.lt-pos-bottom-left  {
+  left: var(--slt-safe-margin);
+  bottom: var(--slt-safe-margin);
+}
+
+.lt-pos-bottom-right {
+  right: var(--slt-safe-margin);
+  bottom: var(--slt-safe-margin);
+}
+
+.lt-pos-top-left {
+  left: var(--slt-safe-margin);
+  top: var(--slt-safe-margin);
+}
+
+.lt-pos-top-right {
+  right: var(--slt-safe-margin);
+  top: var(--slt-safe-margin);
+}
+
+.lt-pos-center {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+  
+.lt-pos-top-center {
+  left: 50%;
+  top: var(--slt-safe-margin);
+  transform: translateX(-50%);
+}
+
+.lt-pos-bottom-center {
+  left: 50%;
+  bottom: var(--slt-safe-margin);
+  transform: translateX(-50%);
+}
+
 )CSS";
 
 	css += "\n/* Per-LT scoped styles */\n";
