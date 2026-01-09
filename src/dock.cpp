@@ -28,10 +28,80 @@
 #include <QSizePolicy>
 #include <QTimer>
 #include <QDateTime>
+#include <QComboBox>
+#include <QSpinBox>
+#include <QMetaObject>
+#include <QUrl>
+#include <QAbstractButton>
+#include <QDesktopServices>
+#include <QMessageBox>
 
 static QWidget *g_dockWidget = nullptr;
 
 namespace smart_lt::ui {
+
+// -------------------------
+// NEW: Core event bus hookup
+// -------------------------
+void LowerThirdDock::coreEventThunk(const smart_lt::core_event &ev, void *user)
+{
+	auto *self = static_cast<LowerThirdDock *>(user);
+	if (!self)
+		return;
+
+	// Always marshal to Qt thread to keep UI safe
+	QMetaObject::invokeMethod(self, [self, ev]() { self->onCoreEvent(ev); }, Qt::QueuedConnection);
+}
+
+LowerThirdDock::~LowerThirdDock()
+{
+	if (coreListenerToken_) {
+		smart_lt::remove_event_listener(coreListenerToken_);
+		coreListenerToken_ = 0;
+	}
+}
+
+void LowerThirdDock::onCoreEvent(const smart_lt::core_event &ev)
+{
+	switch (ev.type) {
+	case smart_lt::event_type::VisibilityChanged: {
+		const QString qid = QString::fromStdString(ev.id);
+		const bool active = ev.visible;
+
+		for (auto &row : rows) {
+			if (row.id != qid)
+				continue;
+
+			if (row.row) {
+				row.row->setProperty("sltActive", QVariant(active));
+				row.row->style()->unpolish(row.row);
+				row.row->style()->polish(row.row);
+				row.row->update();
+			}
+
+			if (row.visibleCheck) {
+				row.visibleCheck->blockSignals(true);
+				row.visibleCheck->setChecked(active);
+				row.visibleCheck->blockSignals(false);
+			}
+
+			updateRowCountdownFor(row);
+			break;
+		}
+		break;
+	}
+
+	case smart_lt::event_type::ListChanged:
+	case smart_lt::event_type::Reloaded: {
+		rebuildList();
+		updateRowCountdowns();
+		break;
+	}
+
+	default:
+		break;
+	}
+}
 
 LowerThirdDock::LowerThirdDock(QWidget *parent) : QWidget(parent)
 {
@@ -64,7 +134,9 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 
 	auto *st = style();
 
-	// Top row
+	// -------------------------
+	// Top row: Resources (output dir)
+	// -------------------------
 	{
 		auto *row = new QHBoxLayout();
 		row->setSpacing(6);
@@ -80,28 +152,93 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 		outputBrowseBtn->setFlat(true);
 		outputBrowseBtn->setIcon(st->standardIcon(QStyle::SP_DirOpenIcon));
 
-		ensureSourceBtn = new QPushButton(this);
-		ensureSourceBtn->setCursor(Qt::PointingHandCursor);
-		ensureSourceBtn->setToolTip(tr("Add/Ensure Browser Source in current scene"));
-		ensureSourceBtn->setFlat(true);
-
-		QIcon globe = QIcon::fromTheme(QStringLiteral("internet-web-browser"));
-		if (globe.isNull())
-			globe = st->standardIcon(QStyle::SP_BrowserReload);
-		ensureSourceBtn->setIcon(globe);
-
 		row->addWidget(lbl);
 		row->addWidget(outputPathEdit, 1);
 		row->addWidget(outputBrowseBtn);
-		row->addWidget(ensureSourceBtn);
 
 		rootLayout->addLayout(row);
 
 		connect(outputBrowseBtn, &QPushButton::clicked, this, &LowerThirdDock::onBrowseOutputFolder);
-		connect(ensureSourceBtn, &QPushButton::clicked, this, &LowerThirdDock::onEnsureBrowserSourceClicked);
 	}
 
+	// -------------------------
+	// Browser Source selector row (combo-only workflow)
+	// -------------------------
+	{
+		auto *row = new QHBoxLayout();
+		row->setSpacing(6);
+
+		auto *lbl = new QLabel(tr("Browser Source:"), this);
+
+		browserSourceCombo = new QComboBox(this);
+		browserSourceCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+		browserSourceCombo->setToolTip(
+			tr("Select an existing OBS Browser Source that will display and control Smart Lower Thirds"));
+
+		refreshSourcesBtn = new QPushButton(this);
+		refreshSourcesBtn->setCursor(Qt::PointingHandCursor);
+		refreshSourcesBtn->setToolTip(tr("Refresh list"));
+		refreshSourcesBtn->setFlat(true);
+
+		QIcon refresh = QIcon::fromTheme(QStringLiteral("view-refresh"));
+		if (refresh.isNull())
+			refresh = st->standardIcon(QStyle::SP_BrowserReload);
+		refreshSourcesBtn->setIcon(refresh);
+
+		row->addWidget(lbl);
+		row->addWidget(browserSourceCombo, 1);
+		row->addWidget(refreshSourcesBtn);
+
+		rootLayout->addLayout(row);
+
+		connect(refreshSourcesBtn, &QPushButton::clicked, this, [this]() { populateBrowserSources(true); });
+		connect(browserSourceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+			&LowerThirdDock::onBrowserSourceChanged);
+	}
+
+	// -------------------------
+	// Browser Source size row + exclusive mode
+	// -------------------------
+	{
+		auto *row = new QHBoxLayout();
+		row->setSpacing(6);
+
+		auto *lbl = new QLabel(tr("Browser Size:"), this);
+
+		browserWidthSpin = new QSpinBox(this);
+		browserWidthSpin->setRange(1, 16384);
+		browserWidthSpin->setToolTip(tr("Width of the selected Browser Source"));
+		browserWidthSpin->setFixedWidth(110);
+
+		browserHeightSpin = new QSpinBox(this);
+		browserHeightSpin->setRange(1, 16384);
+		browserHeightSpin->setToolTip(tr("Height of the selected Browser Source"));
+		browserHeightSpin->setFixedWidth(110);
+
+		exclusiveModeCheck = new QCheckBox(tr("Exclusive"), this);
+		exclusiveModeCheck->setToolTip(
+			tr("When enabled, activating one lower third automatically hides the others"));
+
+		row->addWidget(lbl);
+		row->addWidget(browserWidthSpin);
+		row->addWidget(new QLabel(tr("x"), this));
+		row->addWidget(browserHeightSpin);
+		row->addStretch(1);
+		row->addWidget(exclusiveModeCheck);
+
+		rootLayout->addLayout(row);
+
+		connect(browserWidthSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+			&LowerThirdDock::onBrowserSizeChanged);
+		connect(browserHeightSpin, QOverload<int>::of(&QSpinBox::valueChanged), this,
+			&LowerThirdDock::onBrowserSizeChanged);
+		connect(exclusiveModeCheck, &QCheckBox::toggled, this,
+			[this](bool on) { onExclusiveModeChanged(on ? 1 : 0); });
+	}
+
+	// -------------------------
 	// List
+	// -------------------------
 	scrollArea = new QScrollArea(this);
 	scrollArea->setObjectName(QStringLiteral("LowerThirdContent"));
 	scrollArea->setWidgetResizable(true);
@@ -115,11 +252,23 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 	scrollArea->setWidget(listContainer);
 	rootLayout->addWidget(scrollArea, 1);
 
+	// -------------------------
 	// Add button
+	// -------------------------
 	{
 		auto *row = new QHBoxLayout();
 		row->setSpacing(6);
 		row->addStretch(1);
+
+		infoBtn = new QPushButton(this);
+		infoBtn->setCursor(Qt::PointingHandCursor);
+		infoBtn->setToolTip(tr("Troubleshooting / Help"));
+		infoBtn->setFlat(true);
+
+		QIcon infoIco = QIcon::fromTheme(QStringLiteral("help-about"));
+		if (infoIco.isNull())
+			infoIco = st->standardIcon(QStyle::SP_MessageBoxInformation);
+		infoBtn->setIcon(infoIco);
 
 		addBtn = new QPushButton(this);
 		addBtn->setCursor(Qt::PointingHandCursor);
@@ -131,10 +280,39 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 			plus = st->standardIcon(QStyle::SP_DialogYesButton);
 		addBtn->setIcon(plus);
 
+		row->addWidget(infoBtn);
 		row->addWidget(addBtn);
 		rootLayout->addLayout(row);
 
 		connect(addBtn, &QPushButton::clicked, this, &LowerThirdDock::onAddLowerThird);
+
+		connect(infoBtn, &QPushButton::clicked, this, [this]() {
+			QMessageBox box(this);
+			box.setIcon(QMessageBox::Information);
+			box.setWindowTitle(tr("Smart Lower Thirds • Troubleshooting"));
+			box.setText(tr("Resources path must have read and write access from OBS Studio."));
+			box.setInformativeText(tr(
+				"Tip: It is best to store resources in Documents or another location where your user account has full access.\n\n"
+				"Use the buttons below to open the resource page and video guides."));
+			QAbstractButton *openPage = box.addButton(tr("Open Resource Page"), QMessageBox::ActionRole);
+			QAbstractButton *openV1 = box.addButton(tr("Open Video 1"), QMessageBox::ActionRole);
+			QAbstractButton *openV2 = box.addButton(tr("Open Video 2"), QMessageBox::ActionRole);
+			box.addButton(QMessageBox::Ok);
+
+			box.exec();
+
+			QAbstractButton *clicked = box.clickedButton();
+			if (clicked == openPage) {
+				QDesktopServices::openUrl(
+					QUrl(QStringLiteral("https://obscountdown.com/r/smart-lower-thirds")));
+			} else if (clicked == openV1) {
+				QDesktopServices::openUrl(
+					QUrl(QStringLiteral("https://studio.youtube.com/video/AunKJCyrSmM/edit")));
+			} else if (clicked == openV2) {
+				QDesktopServices::openUrl(
+					QUrl(QStringLiteral("https://studio.youtube.com/video/79Qh2hg9Z_o/edit")));
+			}
+		});
 	}
 
 	// Footer
@@ -142,13 +320,14 @@ QScrollArea#LowerThirdContent QPushButton:hover { background: rgba(255,255,255,0
 
 	const bool hasDir = smart_lt::has_output_dir();
 	addBtn->setEnabled(hasDir);
-	ensureSourceBtn->setEnabled(hasDir);
+	if (browserSourceCombo)
+		browserSourceCombo->setEnabled(true);
+	if (refreshSourcesBtn)
+		refreshSourcesBtn->setEnabled(true);
 }
 
 bool LowerThirdDock::init()
 {
-	smart_lt::init_from_disk();
-
 	if (smart_lt::has_output_dir())
 		outputPathEdit->setText(QString::fromStdString(smart_lt::output_dir()));
 	else
@@ -156,18 +335,138 @@ bool LowerThirdDock::init()
 
 	const bool hasDir = smart_lt::has_output_dir();
 	addBtn->setEnabled(hasDir);
-	ensureSourceBtn->setEnabled(hasDir);
 
 	if (hasDir)
 		smart_lt::ensure_output_artifacts_exist();
 
+	// Populate browser sources from OBS + restore selection from core config
+	populateBrowserSources(true);
+
+	// Restore browser size + exclusive mode from persisted core config
+	if (browserWidthSpin) {
+		browserWidthSpin->blockSignals(true);
+		browserWidthSpin->setValue(smart_lt::target_browser_width());
+		browserWidthSpin->blockSignals(false);
+	}
+	if (browserHeightSpin) {
+		browserHeightSpin->blockSignals(true);
+		browserHeightSpin->setValue(smart_lt::target_browser_height());
+		browserHeightSpin->blockSignals(false);
+	}
+	if (exclusiveModeCheck) {
+		exclusiveModeCheck->blockSignals(true);
+		exclusiveModeCheck->setChecked(smart_lt::dock_exclusive_mode());
+		exclusiveModeCheck->blockSignals(false);
+	}
+
 	rebuildList();
 
-	ensureRepeatTimerStarted();
+	// Subscribe to core events so dock stays in sync with WS + external edits
+	if (!coreListenerToken_) {
+		coreListenerToken_ = smart_lt::add_event_listener(&LowerThirdDock::coreEventThunk, this);
+	}
 
+	ensureRepeatTimerStarted();
 	return true;
 }
 
+// -------------------------
+// Browser Source selector helpers
+// -------------------------
+void LowerThirdDock::populateBrowserSources(bool keepSelection)
+{
+	if (!browserSourceCombo)
+		return;
+
+	populatingSources_ = true;
+	browserSourceCombo->blockSignals(true);
+
+	const QString previous = keepSelection ? browserSourceCombo->currentData().toString() : QString();
+	const QString saved = QString::fromStdString(smart_lt::target_browser_source_name());
+
+	browserSourceCombo->clear();
+
+	// Placeholder / None
+	browserSourceCombo->addItem(tr("— Select a Browser Source —"), QVariant(QString()));
+
+	const auto names = smart_lt::list_browser_source_names();
+	for (const auto &n : names) {
+		const QString qn = QString::fromStdString(n);
+		browserSourceCombo->addItem(qn, QVariant(qn));
+	}
+
+	int idxToSelect = 0;
+
+	auto findByData = [this](const QString &val) -> int {
+		if (val.isEmpty())
+			return 0;
+		for (int i = 0; i < browserSourceCombo->count(); ++i) {
+			if (browserSourceCombo->itemData(i).toString() == val)
+				return i;
+		}
+		return 0;
+	};
+
+	if (!previous.isEmpty())
+		idxToSelect = findByData(previous);
+
+	if (idxToSelect == 0 && !saved.isEmpty())
+		idxToSelect = findByData(saved);
+
+	browserSourceCombo->setCurrentIndex(idxToSelect);
+
+	browserSourceCombo->blockSignals(false);
+	populatingSources_ = false;
+}
+
+void LowerThirdDock::onBrowserSourceChanged(int index)
+{
+	if (populatingSources_)
+		return;
+
+	if (!browserSourceCombo || index < 0)
+		return;
+
+	const QString name = browserSourceCombo->itemData(index).toString();
+
+	// Persist selection (empty = none)
+	smart_lt::set_target_browser_source_name(name.toStdString());
+
+	// If user selected something real and we have an output dir,
+	// rebuild/swap once so it immediately points to the latest generated HTML.
+	if (!name.isEmpty() && smart_lt::has_output_dir()) {
+		smart_lt::rebuild_and_swap();
+	}
+
+	emit requestSave();
+}
+
+void LowerThirdDock::onBrowserSizeChanged()
+{
+	if (!browserWidthSpin || !browserHeightSpin)
+		return;
+
+	const int w = browserWidthSpin->value();
+	const int h = browserHeightSpin->value();
+
+	// Persist + apply to selected source if exists
+	smart_lt::set_target_browser_dimensions(w, h);
+
+	emit requestSave();
+}
+
+void LowerThirdDock::onExclusiveModeChanged(int)
+{
+	if (!exclusiveModeCheck)
+		return;
+
+	smart_lt::set_dock_exclusive_mode(exclusiveModeCheck->isChecked());
+	emit requestSave();
+}
+
+// -------------------------
+// Repeat timer
+// -------------------------
 void LowerThirdDock::ensureRepeatTimerStarted()
 {
 	if (repeatTimer_)
@@ -186,16 +485,9 @@ void LowerThirdDock::repeatTick()
 	if (!smart_lt::has_output_dir())
 		return;
 
-	// If settings can change repeat values while dock is open, ensure core memory is current.
-	// If your settings dialog already updates core memory, this is still safe (and cheap).
-	// If you prefer, remove it and guarantee core state is always in sync.
-	// smart_lt::load_state_json();
-
 	const qint64 now = QDateTime::currentMSecsSinceEpoch();
-	bool changed = false;
 
 	const auto &items = smart_lt::all();
-
 	{
 		QSet<QString> alive;
 		alive.reserve((int)items.size());
@@ -220,28 +512,45 @@ void LowerThirdDock::repeatTick()
 		const QString qid = QString::fromStdString(c.id);
 
 		const int every = c.repeat_every_sec;
+		int visibleSec = c.repeat_visible_sec;
+
+		// Mode matrix:
+		//  - every==0 && visible==0   => full manual (no scheduling)
+		//  - every==0 && visible>0    => manual show + auto-hide after visibleSec
+		//  - every>0                 => full automated (auto-show + auto-hide). If visible==0, use default.
 		if (every <= 0) {
 			nextOnMs_.remove(qid);
-			offAtMs_.remove(qid);
-			continue;
+
+			if (visibleSec <= 0) {
+				offAtMs_.remove(qid);
+				continue;
+			}
+
+			if (smart_lt::is_visible(c.id)) {
+				if (!offAtMs_.contains(qid))
+					offAtMs_[qid] = now + (qint64)visibleSec * 1000;
+			} else {
+				offAtMs_.remove(qid);
+			}
+
+		} else {
+			if (visibleSec <= 0)
+				visibleSec = 3;
+
+			if (!nextOnMs_.contains(qid))
+				nextOnMs_[qid] = now + (qint64)every * 1000;
 		}
-
-		int visibleSec = c.repeat_visible_sec;
-		if (visibleSec <= 0)
-			visibleSec = 3;
-
-		if (!nextOnMs_.contains(qid))
-			nextOnMs_[qid] = now + (qint64)every * 1000;
 
 		if (offAtMs_.contains(qid) && now >= offAtMs_[qid]) {
-			if (smart_lt::is_visible(c.id)) {
-				smart_lt::set_visible(c.id, false);
-				changed = true;
-			}
 			offAtMs_.remove(qid);
+			if (smart_lt::is_visible(c.id)) {
+				smart_lt::set_visible_persist(c.id, false);
+				emit requestSave();
+			}
 		}
 
-		if (now >= nextOnMs_[qid]) {
+		// Auto-show
+		if (every > 0 && nextOnMs_.contains(qid) && now >= nextOnMs_[qid]) {
 			qint64 next = nextOnMs_[qid];
 			const qint64 step = (qint64)every * 1000;
 			while (next <= now)
@@ -249,24 +558,19 @@ void LowerThirdDock::repeatTick()
 			nextOnMs_[qid] = next;
 
 			if (!smart_lt::is_visible(c.id)) {
-				smart_lt::set_visible(c.id, true);
-				changed = true;
+				smart_lt::set_visible_persist(c.id, true);
 				offAtMs_[qid] = now + (qint64)visibleSec * 1000;
+				emit requestSave();
 			}
 		}
-	}
-
-	if (changed) {
-		smart_lt::save_visible_json();
-		updateRowActiveStyles();
-		updateRowCountdowns();
-		emit requestSave();
-		return;
 	}
 
 	updateRowCountdowns();
 }
 
+// -------------------------
+// Actions
+// -------------------------
 void LowerThirdDock::onBrowseOutputFolder()
 {
 	const QString dir = QFileDialog::getExistingDirectory(this, tr("Select Output Folder"));
@@ -275,7 +579,6 @@ void LowerThirdDock::onBrowseOutputFolder()
 
 	smart_lt::set_output_dir_and_load(dir.toStdString());
 
-	// Reset schedules on output path change to avoid weird countdowns
 	nextOnMs_.clear();
 	offAtMs_.clear();
 
@@ -283,22 +586,12 @@ void LowerThirdDock::onBrowseOutputFolder()
 
 	const bool hasDir = smart_lt::has_output_dir();
 	addBtn->setEnabled(hasDir);
-	ensureSourceBtn->setEnabled(hasDir);
+
+	populateBrowserSources(true);
 
 	rebuildList();
 	updateRowCountdowns();
 	emit requestSave();
-}
-
-void LowerThirdDock::onEnsureBrowserSourceClicked()
-{
-	if (!smart_lt::has_output_dir()) {
-		LOGW("Cannot ensure browser source: output dir not set");
-		return;
-	}
-
-	smart_lt::ensure_output_artifacts_exist();
-	smart_lt::ensure_browser_source_in_current_scene();
 }
 
 void LowerThirdDock::onAddLowerThird()
@@ -306,15 +599,15 @@ void LowerThirdDock::onAddLowerThird()
 	if (!smart_lt::has_output_dir())
 		return;
 
-	const std::string id = smart_lt::add_default_lower_third();
-	if (id.empty())
-		return;
+	smart_lt::add_default_lower_third();
 
-	rebuildList();
 	updateRowCountdowns();
 	emit requestSave();
 }
 
+// -------------------------
+// List rendering
+// -------------------------
 void LowerThirdDock::rebuildList()
 {
 	for (auto &row : rows) {
@@ -366,19 +659,17 @@ void LowerThirdDock::rebuildList()
 		h->addWidget(thumb);
 		ui.thumbnailLbl = thumb;
 
-		// Label block (Title + Countdown)
 		auto *labelCol = new QWidget(rowFrame);
 		auto *labelColLayout = new QVBoxLayout(labelCol);
 		labelColLayout->setContentsMargins(0, 0, 0, 0);
 		labelColLayout->setSpacing(0);
 
-		// Title
-		auto *label = new QLabel(QString::fromStdString(cfg.title), labelCol);
+		const QString displayLabel = QString::fromStdString(cfg.label.empty() ? cfg.title : cfg.label);
+		auto *label = new QLabel(displayLabel, labelCol);
 		label->setObjectName(QStringLiteral("sltRowLabel"));
 		label->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
 		label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
-		// Sub label (countdown/status)
 		auto *sub = new QLabel(labelCol);
 		sub->setObjectName(QStringLiteral("sltRowSubLabel"));
 		sub->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
@@ -393,23 +684,47 @@ void LowerThirdDock::rebuildList()
 		ui.labelLbl = label;
 		ui.subLbl = sub;
 
+		auto *upBtn = new QPushButton(rowFrame);
+		auto *downBtn = new QPushButton(rowFrame);
 		auto *cloneBtn = new QPushButton(rowFrame);
 		auto *settingsBtn = new QPushButton(rowFrame);
 		auto *removeBtn = new QPushButton(rowFrame);
 
 		auto *st = rowFrame->style();
 
+		upBtn->setIcon(QIcon::fromTheme(QStringLiteral("go-up"), st->standardIcon(QStyle::SP_ArrowUp)));
+		upBtn->setToolTip(tr("Move up"));
+		upBtn->setFlat(true);
+
+		downBtn->setIcon(QIcon::fromTheme(QStringLiteral("go-down"), st->standardIcon(QStyle::SP_ArrowDown)));
+		downBtn->setToolTip(tr("Move down"));
+		downBtn->setFlat(true);
+
 		cloneBtn->setIcon(
 			QIcon::fromTheme(QStringLiteral("edit-copy"), st->standardIcon(QStyle::SP_DialogOpenButton)));
 		cloneBtn->setToolTip(tr("Clone lower third"));
 		cloneBtn->setFlat(true);
 
-		settingsBtn->setIcon(QIcon::fromTheme(QStringLiteral("settings-configure"),
-						      st->standardIcon(QStyle::SP_FileDialogInfoView)));
-		settingsBtn->setToolTip(tr("Open settings"));
+		settingsBtn->setCursor(Qt::PointingHandCursor);
+
+		QIcon edit = QIcon::fromTheme(QStringLiteral("document-edit"));
+		if (edit.isNull())
+			edit = QIcon::fromTheme(QStringLiteral("edit-rename"));
+		if (edit.isNull())
+			edit = style()->standardIcon(QStyle::SP_FileDialogDetailedView);
+
+		settingsBtn->setIcon(edit);
+		settingsBtn->setToolTip(tr("Press here to edit the lower third"));
 		settingsBtn->setFlat(true);
 
 		removeBtn->setIcon(st->standardIcon(QStyle::SP_DialogCloseButton));
+		removeBtn->setCursor(Qt::PointingHandCursor);
+		{
+			QIcon del = QIcon::fromTheme(QStringLiteral("edit-delete"));
+			if (del.isNull())
+				del = style()->standardIcon(QStyle::SP_DialogCloseButton);
+			removeBtn->setIcon(del);
+		}
 		removeBtn->setToolTip(tr("Remove lower third"));
 		removeBtn->setFlat(true);
 
@@ -417,6 +732,11 @@ void LowerThirdDock::rebuildList()
 		settingsBtn->setIconSize(QSize(16, 16));
 		removeBtn->setIconSize(QSize(16, 16));
 
+		upBtn->setIconSize(QSize(16, 16));
+		downBtn->setIconSize(QSize(16, 16));
+
+		h->addWidget(upBtn);
+		h->addWidget(downBtn);
 		h->addWidget(cloneBtn);
 		h->addWidget(settingsBtn);
 		h->addWidget(removeBtn);
@@ -424,6 +744,8 @@ void LowerThirdDock::rebuildList()
 		listLayout->addWidget(rowFrame);
 
 		ui.row = rowFrame;
+		ui.upBtn = upBtn;
+		ui.downBtn = downBtn;
 		ui.cloneBtn = cloneBtn;
 		ui.settingsBtn = settingsBtn;
 		ui.removeBtn = removeBtn;
@@ -436,6 +758,14 @@ void LowerThirdDock::rebuildList()
 		thumb->installEventFilter(this);
 
 		connect(cloneBtn, &QPushButton::clicked, this, [this, id]() { handleClone(id); });
+		connect(upBtn, &QPushButton::clicked, this, [this, id]() {
+			smart_lt::move_lower_third(id.toStdString(), -1);
+			emit requestSave();
+		});
+		connect(downBtn, &QPushButton::clicked, this, [this, id]() {
+			smart_lt::move_lower_third(id.toStdString(), +1);
+			emit requestSave();
+		});
 		connect(settingsBtn, &QPushButton::clicked, this, [this, id]() { handleOpenSettings(id); });
 		connect(removeBtn, &QPushButton::clicked, this, [this, id]() { handleRemove(id); });
 
@@ -523,30 +853,49 @@ void LowerThirdDock::handleToggleVisible(const QString &id)
 {
 	const std::string sid = id.toStdString();
 	const bool wasVisible = smart_lt::is_visible(sid);
+	const bool ok = smart_lt::toggle_visible_persist(sid);
 
-	smart_lt::toggle_visible(sid);
-	smart_lt::save_visible_json();
+	if (!ok)
+		return;
 
 	const bool nowVisible = smart_lt::is_visible(sid);
 
+	const bool exclusive = smart_lt::dock_exclusive_mode();
+	if (exclusive && !wasVisible && nowVisible) {
+		const auto visible = smart_lt::visible_ids();
+		for (const auto &vid : visible) {
+			if (vid == sid)
+				continue;
+			smart_lt::set_visible_persist(vid, false);
+		}
+	}
+
 	if (!wasVisible && nowVisible) {
 		if (auto *cfg = smart_lt::get_by_id(sid)) {
-			if (cfg->repeat_every_sec > 0) {
-				int visibleSec = cfg->repeat_visible_sec;
-				if (visibleSec <= 0)
+			const int every = cfg->repeat_every_sec;
+			int visibleSec = cfg->repeat_visible_sec;
+
+			// Same mode matrix as repeatTick()
+			//  - every==0 && visible==0   => full manual (no scheduling)
+			//  - every==0 && visible>0    => manual show + auto-hide after visibleSec
+			//  - every>0                 => full automated. If visible==0, use default.
+			if (every > 0 || visibleSec > 0) {
+				if (every > 0 && visibleSec <= 0)
 					visibleSec = 3;
 
-				const qint64 now = QDateTime::currentMSecsSinceEpoch();
-				offAtMs_[id] = now + (qint64)visibleSec * 1000;
+				if (visibleSec > 0) {
+					const qint64 now = QDateTime::currentMSecsSinceEpoch();
+					offAtMs_[id] = now + (qint64)visibleSec * 1000;
+				}
 
-				if (!nextOnMs_.contains(id)) {
-					nextOnMs_[id] = now + (qint64)cfg->repeat_every_sec * 1000;
+				if (every > 0 && !nextOnMs_.contains(id)) {
+					const qint64 now = QDateTime::currentMSecsSinceEpoch();
+					nextOnMs_[id] = now + (qint64)every * 1000;
 				}
 			}
 		}
 	}
 
-	updateRowActiveStyles();
 	updateRowCountdowns();
 	emit requestSave();
 }
@@ -556,12 +905,7 @@ void LowerThirdDock::handleClone(const QString &id)
 	if (!smart_lt::has_output_dir())
 		return;
 
-	const std::string newId = smart_lt::clone_lower_third(id.toStdString());
-	if (newId.empty())
-		return;
-
-	rebuildList();
-	updateRowCountdowns();
+	smart_lt::clone_lower_third(id.toStdString());
 	emit requestSave();
 }
 
@@ -570,10 +914,6 @@ void LowerThirdDock::handleOpenSettings(const QString &id)
 	smart_lt::ui::LowerThirdSettingsDialog dlg(this);
 	dlg.setLowerThirdId(id);
 	dlg.exec();
-
-	// If settings writes to disk and core doesn't refresh memory
-	// smart_lt::load_state_json();
-
 	rebuildList();
 	updateRowCountdowns();
 	emit requestSave();
@@ -589,8 +929,6 @@ void LowerThirdDock::handleRemove(const QString &id)
 	nextOnMs_.remove(id);
 	offAtMs_.remove(id);
 
-	rebuildList();
-	updateRowCountdowns();
 	emit requestSave();
 }
 
@@ -617,9 +955,36 @@ void LowerThirdDock::updateRowCountdownFor(const LowerThirdRowUi &rowUi)
 	}
 
 	const int every = cfg->repeat_every_sec;
+	const int keepVisible = cfg->repeat_visible_sec;
+
+	// Mode matrix:
+	//  - every==0 && keepVisible==0 => full manual (no countdowns)
+	//  - every==0 && keepVisible>0  => manual show + auto-hide countdown
+	//  - every>0                   => full automated (next + hide countdowns)
 	if (every <= 0) {
-		rowUi.subLbl->clear();
-		rowUi.subLbl->setVisible(false);
+		if (keepVisible <= 0) {
+			rowUi.subLbl->clear();
+			rowUi.subLbl->setVisible(false);
+			return;
+		}
+
+		const bool isVis = smart_lt::is_visible(cfg->id);
+		if (!isVis) {
+			rowUi.subLbl->clear();
+			rowUi.subLbl->setVisible(false);
+			return;
+		}
+
+		rowUi.subLbl->setVisible(true);
+
+		const qint64 now = QDateTime::currentMSecsSinceEpoch();
+		const QString qid = rowUi.id;
+
+		if (!offAtMs_.contains(qid))
+			offAtMs_[qid] = now + (qint64)keepVisible * 1000;
+
+		const qint64 leftHide = offAtMs_[qid] - now;
+		rowUi.subLbl->setText(QStringLiteral("Hides in ") + formatCountdownMs(leftHide));
 		return;
 	}
 
@@ -659,6 +1024,11 @@ void LowerThirdDock::updateRowCountdowns()
 		updateRowCountdownFor(r);
 }
 
+void LowerThirdDock::refreshBrowserSources()
+{
+	populateBrowserSources(true);
+}
+
 } // namespace smart_lt::ui
 
 void LowerThird_create_dock()
@@ -689,10 +1059,6 @@ void LowerThird_destroy_dock()
 #else
 	obs_frontend_remove_dock(g_dockWidget);
 #endif
-
-	// In some OBS builds, removing the dock does not delete the widget.
-	// If observe timers still firing after removal, uncomment:
-	// g_dockWidget->deleteLater();
 
 	g_dockWidget = nullptr;
 	LOGI("Dock destroyed");

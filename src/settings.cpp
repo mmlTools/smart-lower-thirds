@@ -33,10 +33,11 @@
 #include <QTabWidget>
 #include <QWidget>
 #include <QSpinBox>
+#include <QSlider>
 
 #include <unzip.h>
 #include <zip.h>
-
+#include <algorithm>
 #include <cstring>
 
 namespace smart_lt::ui {
@@ -154,19 +155,26 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 
 		int row = 0;
 
-		// Row 0: Title
+		// Row 0: Label
+		g->addWidget(new QLabel(tr("Dock Label:"), this), row, 0);
+		labelEdit = new QLineEdit(this);
+		labelEdit->setToolTip(tr("Display-only label used in the dock list"));
+		g->addWidget(labelEdit, row, 1, 1, 3);
+
+		row++;
+		// Row 1: Title
 		g->addWidget(new QLabel(tr("Title:"), this), row, 0);
 		titleEdit = new QLineEdit(this);
 		g->addWidget(titleEdit, row, 1, 1, 3);
 
 		row++;
-		// Row 1: Subtitle
+		// Row 2: Subtitle
 		g->addWidget(new QLabel(tr("Subtitle:"), this), row, 0);
 		subtitleEdit = new QLineEdit(this);
 		g->addWidget(subtitleEdit, row, 1, 1, 3);
 
 		row++;
-		// Row 2: Profile Picture
+		// Row 3: Profile Picture
 		g->addWidget(new QLabel(tr("Profile picture:"), this), row, 0);
 		auto *picRow = new QHBoxLayout();
 		picRow->setContentsMargins(0, 0, 0, 0);
@@ -180,8 +188,20 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		browseProfilePictureBtn->setToolTip(tr("Browse profile picture..."));
 		browseProfilePictureBtn->setFixedWidth(32);
 
+		deleteProfilePictureBtn = new QPushButton(this);
+		deleteProfilePictureBtn->setCursor(Qt::PointingHandCursor);
+		{
+			QIcon del = QIcon::fromTheme(QStringLiteral("edit-delete"));
+			if (del.isNull())
+				del = style()->standardIcon(QStyle::SP_DialogCloseButton);
+			deleteProfilePictureBtn->setIcon(del);
+		}
+		deleteProfilePictureBtn->setToolTip(tr("Remove profile picture"));
+		deleteProfilePictureBtn->setFixedWidth(32);
+
 		picRow->addWidget(profilePictureEdit, 1);
 		picRow->addWidget(browseProfilePictureBtn);
+		picRow->addWidget(deleteProfilePictureBtn);
 		g->addLayout(picRow, row, 1, 1, 3);
 
 		row++;
@@ -225,6 +245,8 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 
 		connect(browseProfilePictureBtn, &QPushButton::clicked, this,
 			&LowerThirdSettingsDialog::onBrowseProfilePicture);
+		connect(deleteProfilePictureBtn, &QPushButton::clicked, this,
+			&LowerThirdSettingsDialog::onDeleteProfilePicture);
 	}
 
 	// Style
@@ -281,7 +303,54 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		textColorBtn = new QPushButton(tr("Pick"), this);
 		g->addWidget(textColorBtn, row, 3);
 
+		row++;
+		g->addWidget(new QLabel(tr("Opacity:"), this), row, 0);
+
+		opacitySlider = new QSlider(Qt::Horizontal, this);
+		opacitySlider->setRange(0, 100); // 0..100
+		opacitySlider->setSingleStep(5); // 0.05 steps
+		opacitySlider->setPageStep(10);
+		opacitySlider->setToolTip(tr("0 = transparent, 100 = opaque"));
+		g->addWidget(opacitySlider, row, 1);
+
+		opacityValue = new QLabel(this);
+		opacityValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+		g->addWidget(opacityValue, row, 2, 1, 2); // span 2 cols
+
+		row++;
+		g->addWidget(new QLabel(tr("Radius:"), this), row, 0);
+
+		radiusSlider = new QSlider(Qt::Horizontal, this);
+		radiusSlider->setRange(0, 100); // 0..100
+		radiusSlider->setSingleStep(1);
+		radiusSlider->setPageStep(5);
+		radiusSlider->setToolTip(tr("Border radius percentage (0-100)"));
+		g->addWidget(radiusSlider, row, 1);
+
+		radiusValue = new QLabel(this);
+		radiusValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+		g->addWidget(radiusValue, row, 2, 1, 2);
+
 		root->addWidget(styleBox);
+
+		auto updateOpacityLabel = [this]() {
+			const int v = opacitySlider ? opacitySlider->value() : 0;
+			if (opacityValue)
+				opacityValue->setText(QString("%1 Units").arg(v));
+		};
+
+		auto updateRadiusLabel = [this]() {
+			const int v = radiusSlider ? radiusSlider->value() : 0;
+			if (radiusValue)
+				radiusValue->setText(QString("%1 Units").arg(v));
+		};
+
+		connect(opacitySlider, &QSlider::valueChanged, this,
+			[updateOpacityLabel](int) { updateOpacityLabel(); });
+		connect(radiusSlider, &QSlider::valueChanged, this, [updateRadiusLabel](int) { updateRadiusLabel(); });
+
+		updateOpacityLabel();
+		updateRadiusLabel();
 
 		connect(bgColorBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onPickBgColor);
 		connect(textColorBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onPickTextColor);
@@ -307,7 +376,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 
 			edit = new QPlainTextEdit(page);
 			edit->setLineWrapMode(QPlainTextEdit::NoWrap);
-			// Set a monospace font for code
 			edit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
 
 			v->addWidget(edit);
@@ -318,19 +386,14 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		makeTab(tr("CSS"), cssEdit);
 		makeTab(tr("JS"), jsEdit);
 
-		// 1. Create the button
 		auto *expandBtn = new QPushButton(this);
 		expandBtn->setFlat(true);
 		expandBtn->setCursor(Qt::PointingHandCursor);
 		expandBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
 		expandBtn->setToolTip(tr("Open editor..."));
 		expandBtn->setFixedSize(32, 28);
-
-		// 2. Simply set it as the Corner Widget of the Tab Bar
-		// Qt handles the absolute positioning in the top-right automatically
 		tplTabs->setCornerWidget(expandBtn, Qt::TopRightCorner);
 
-		// 3. Logic to open the correct editor based on the active tab
 		connect(expandBtn, &QPushButton::clicked, this, [this]() {
 			int idx = tplTabs->currentIndex();
 			if (idx == 0)
@@ -344,7 +407,7 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		tplLayout->addWidget(tplTabs, 1);
 		root->addWidget(tplCard, 1);
 	}
-	
+
 	// Footer: Import/Export (left) + Cancel / Save&Apply (right)
 	{
 		auto *footer = new QHBoxLayout();
@@ -412,6 +475,8 @@ void LowerThirdSettingsDialog::loadFromState()
 		return;
 
 	titleEdit->setText(QString::fromStdString(cfg->title));
+	if (labelEdit)
+		labelEdit->setText(QString::fromStdString(cfg->label));
 	subtitleEdit->setText(QString::fromStdString(cfg->subtitle));
 
 	auto setCombo = [](QComboBox *cb, const QString &v) {
@@ -461,6 +526,29 @@ void LowerThirdSettingsDialog::loadFromState()
 	updateColorButton(bgColorBtn, bg);
 	updateColorButton(textColorBtn, fg);
 
+	int op = 85;
+	int rad = 18;
+
+	op = cfg->opacity;
+	rad = cfg->radius;
+
+	op = std::max(0, std::min(100, op));
+	rad = std::max(0, std::min(100, rad));
+
+	op = (op / 5) * 5;
+
+	if (opacitySlider)
+		opacitySlider->setValue(op);
+	if (radiusSlider)
+		radiusSlider->setValue(rad);
+
+	if (opacityValue) {
+		opacityValue->setText(QString("%1 Units").arg(op));
+	}
+	if (radiusValue) {
+		radiusValue->setText(QString("%1 Units").arg(rad));
+	}
+
 	pendingProfilePicturePath.clear();
 	updateCustomAnimFieldsVisibility();
 }
@@ -475,6 +563,8 @@ void LowerThirdSettingsDialog::saveToState()
 		return;
 
 	cfg->title = titleEdit->text().toStdString();
+	if (labelEdit)
+		cfg->label = labelEdit->text().toStdString();
 	cfg->subtitle = subtitleEdit->text().toStdString();
 
 	cfg->anim_in = animInCombo->currentData().toString().toStdString();
@@ -490,6 +580,19 @@ void LowerThirdSettingsDialog::saveToState()
 	if (currentTextColor)
 		cfg->text_color = currentTextColor->name(QColor::HexRgb).toStdString();
 
+	if (opacitySlider) {
+		int op = opacitySlider->value();
+		op = std::max(0, std::min(100, op));
+		op = (op / 5) * 5;
+		cfg->opacity = op;
+	}
+
+	if (radiusSlider) {
+		int rad = radiusSlider->value();
+		rad = std::max(0, std::min(100, rad));
+		cfg->radius = rad;
+	}
+
 	cfg->hotkey = hotkeyEdit->keySequence().toString(QKeySequence::PortableText).toStdString();
 	cfg->repeat_every_sec = repeatEverySpin->value();
 	cfg->repeat_visible_sec = repeatVisibleSpin->value();
@@ -498,7 +601,6 @@ void LowerThirdSettingsDialog::saveToState()
 	cfg->css_template = cssEdit->toPlainText().toStdString();
 	cfg->js_template = jsEdit->toPlainText().toStdString();
 
-	// Copy profile picture into output dir
 	if (!pendingProfilePicturePath.isEmpty() && smart_lt::has_output_dir()) {
 		const QString outDir = QString::fromStdString(smart_lt::output_dir());
 		QDir dir(outDir);
@@ -538,7 +640,6 @@ void LowerThirdSettingsDialog::onSaveAndApply()
 {
 	saveToState();
 
-	// Save & Apply is a rewrite trigger
 	smart_lt::rebuild_and_swap();
 
 	accept();
@@ -553,6 +654,41 @@ void LowerThirdSettingsDialog::onBrowseProfilePicture()
 
 	pendingProfilePicturePath = file;
 	profilePictureEdit->setText(file);
+}
+
+void LowerThirdSettingsDialog::onDeleteProfilePicture()
+{
+	if (currentId.isEmpty())
+		return;
+
+	auto *cfg = smart_lt::get_by_id(currentId.toStdString());
+	if (!cfg)
+		return;
+
+	if (cfg->profile_picture.empty() && pendingProfilePicturePath.isEmpty()) {
+		profilePictureEdit->clear();
+		return;
+	}
+
+	const QMessageBox::StandardButton btn = QMessageBox::question(
+		this, tr("Remove profile picture"), tr("Delete the current profile picture?"),
+		QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+	if (btn != QMessageBox::Yes)
+		return;
+
+	if (!cfg->profile_picture.empty() && smart_lt::has_output_dir()) {
+		QDir dir(QString::fromStdString(smart_lt::output_dir()));
+		const QString oldPath = dir.filePath(QString::fromStdString(cfg->profile_picture));
+		if (QFile::exists(oldPath))
+			QFile::remove(oldPath);
+	}
+
+	cfg->profile_picture.clear();
+	pendingProfilePicturePath.clear();
+	profilePictureEdit->clear();
+
+	smart_lt::save_state_json();
 }
 
 void LowerThirdSettingsDialog::onPickBgColor()
@@ -680,7 +816,6 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 		return;
 	}
 
-	// template.html/css/js are editor content (not merged files)
 	const QByteArray html = htmlEdit->toPlainText().toUtf8();
 	const QByteArray css = cssEdit->toPlainText().toUtf8();
 	const QByteArray js = jsEdit->toPlainText().toUtf8();
@@ -697,6 +832,8 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 	o["lt_position"] = QString::fromStdString(cfg->lt_position);
 	o["bg_color"] = QString::fromStdString(cfg->bg_color);
 	o["text_color"] = QString::fromStdString(cfg->text_color);
+	o["opacity"] = cfg->opacity;
+	o["radius"] = cfg->radius;
 	o["hotkey"] = QString::fromStdString(cfg->hotkey);
 	o["repeat_every_sec"] = cfg->repeat_every_sec;
 	o["repeat_visible_sec"] = cfg->repeat_visible_sec;
@@ -709,7 +846,6 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 	ok = ok && zip_write_file(zf, "template.js", js);
 	ok = ok && zip_write_file(zf, "template.json", json);
 
-	// profile picture (optional) from output folder
 	if (ok && smart_lt::has_output_dir() && !cfg->profile_picture.empty()) {
 		const QString picPath = QDir(QString::fromStdString(smart_lt::output_dir()))
 						.filePath(QString::fromStdString(cfg->profile_picture));
@@ -788,6 +924,13 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 	cfg->lt_position = obj.value("lt_position").toString().toStdString();
 	cfg->bg_color = obj.value("bg_color").toString().toStdString();
 	cfg->text_color = obj.value("text_color").toString().toStdString();
+	cfg->opacity = obj.value("opacity").toInt(cfg->opacity);
+	cfg->radius = obj.value("radius").toInt(cfg->radius);
+
+	cfg->opacity = std::max(0, std::min(100, cfg->opacity));
+	cfg->opacity = (cfg->opacity / 5) * 5;
+	cfg->radius = std::max(0, std::min(100, cfg->radius));
+
 	cfg->hotkey = obj.value("hotkey").toString().toStdString();
 	cfg->repeat_every_sec = obj.value("repeat_every_sec").toInt(0);
 	cfg->repeat_visible_sec = obj.value("repeat_visible_sec").toInt(0);
@@ -814,7 +957,6 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 		}
 	}
 
-	// Import profile picture into output dir
 	if (!profilePicPath.isEmpty() && smart_lt::has_output_dir()) {
 		const QString outDir = QString::fromStdString(smart_lt::output_dir());
 		if (!outDir.isEmpty()) {
@@ -842,8 +984,6 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 
 	smart_lt::save_state_json();
 
-	// Import changes should not immediately rebuild unless user clicks Save&Apply.
-	// But user expectation for import is "applies to editor" now; so we refresh UI fields.
 	loadFromState();
 
 	QMessageBox::information(this, tr("Imported"),

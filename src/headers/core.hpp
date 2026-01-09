@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #include <obs.h>
 #include <obs-module.h>
@@ -35,6 +36,10 @@ namespace smart_lt {
 
 struct lower_third_cfg {
 	std::string id;
+	// Display-only label for the dock list (does not affect overlay content)
+	std::string label;
+	// Sort key for arranging items in the dock (lower first)
+	int order = 0;
 
 	std::string title;
 	std::string subtitle;
@@ -50,6 +55,8 @@ struct lower_third_cfg {
 
 	std::string bg_color;
 	std::string text_color;
+	int opacity = 85; // 0..100
+	int radius  = 5;  // 0..100
 
 	std::string html_template; // inner HTML for <li id="{{ID}}">
 	std::string css_template;  // should be scoped to #{{ID}} (we also do best-effort)
@@ -57,9 +64,47 @@ struct lower_third_cfg {
 
 	std::string hotkey;
 
-	int repeat_every_sec = 0;   // 0 = disabled
-	int repeat_visible_sec = 3; // how long to keep visible when auto-shown
+	int repeat_every_sec   = 0; // 0 = disabled
+	int repeat_visible_sec = 0; // how long to keep visible when auto-shown
 };
+
+// -------------------------
+// Core event bus (bidirectional sync point)
+// -------------------------
+enum class event_type : uint32_t {
+	VisibilityChanged = 1,
+	ListChanged       = 2,
+	Reloaded          = 3,
+};
+
+enum class list_change_reason : uint32_t {
+	Unknown = 0,
+	Create  = 1,
+	Clone   = 2,
+	Delete  = 3,
+	Reload  = 4,
+	Update  = 5,
+};
+
+struct core_event {
+	event_type type = event_type::VisibilityChanged;
+
+	// VisibilityChanged
+	std::string id;
+	bool visible = false;
+	std::vector<std::string> visible_ids;
+
+	// ListChanged / Reloaded
+	list_change_reason reason = list_change_reason::Unknown;
+	std::string id2;
+	bool ok = true;
+	int64_t count = 0;
+};
+
+using core_event_cb = void (*)(const core_event &ev, void *user);
+
+uint64_t add_event_listener(core_event_cb cb, void *user);
+void remove_event_listener(uint64_t token);
 
 // -------------------------
 // Output dir + startup
@@ -86,8 +131,14 @@ lower_third_cfg *get_by_id(const std::string &id);
 // -------------------------
 std::vector<std::string> visible_ids();
 bool is_visible(const std::string &id);
-void set_visible(const std::string &id, bool visible);
-void toggle_visible(const std::string &id);
+
+// NOTE: low-level (no persistence, no notifications)
+void set_visible_nosave(const std::string &id, bool visible);
+void toggle_visible_nosave(const std::string &id);
+
+// High-level (persist + notify)
+bool set_visible_persist(const std::string &id, bool visible);
+bool toggle_visible_persist(const std::string &id);
 
 // -------------------------
 // Persistence
@@ -102,14 +153,28 @@ bool save_visible_json();
 // -------------------------
 bool ensure_output_artifacts_exist();
 bool regenerate_merged_css_js();
-std::string generate_timestamp_html();
 bool rebuild_and_swap();
+
+// Force reload state+visible from disk and rebuild/swap (with notifications)
+bool reload_from_disk_and_rebuild();
 
 // -------------------------
 // Browser source
 // -------------------------
-bool ensure_browser_source_in_current_scene();
-bool swap_browser_source_to_file(const std::string &absoluteHtmlPath);
+std::vector<std::string> list_browser_source_names();
+std::string target_browser_source_name();
+bool set_target_browser_source_name(const std::string &name);
+bool target_browser_source_exists();
+bool swap_target_browser_source_to_file(const std::string &absoluteHtmlPath);
+
+// Browser source dimensions (persisted in module config)
+int target_browser_width();
+int target_browser_height();
+bool set_target_browser_dimensions(int width, int height);
+
+// Dock behavior (persisted in module config)
+bool dock_exclusive_mode();
+bool set_dock_exclusive_mode(bool enabled);
 
 // -------------------------
 // Paths
@@ -118,6 +183,7 @@ std::string path_state_json();   // lt-state.json
 std::string path_visible_json(); // lt-visible.json
 std::string path_styles_css();   // lt-styles.css
 std::string path_scripts_js();   // lt-scripts.js
+std::string path_animate_css();  // animate.min.css
 
 // -------------------------
 // Utility
@@ -126,10 +192,13 @@ std::string now_timestamp_string();
 std::string new_id();
 
 // -------------------------
-// CRUD helpers for dock actions
+// CRUD helpers for dock actions (persist + notify)
 // -------------------------
 std::string add_default_lower_third();
 std::string clone_lower_third(const std::string &id);
 bool remove_lower_third(const std::string &id);
+
+// Reorder helpers (persist + notify). delta: -1 (up), +1 (down)
+bool move_lower_third(const std::string &id, int delta);
 
 } // namespace smart_lt
