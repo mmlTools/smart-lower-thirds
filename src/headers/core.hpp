@@ -45,10 +45,12 @@ struct lower_third_cfg {
 	std::string subtitle;
 	std::string profile_picture;
 
-	std::string anim_in;         // animate.css class OR "custom"
-	std::string anim_out;        // animate.css class OR "custom"
-	std::string custom_anim_in;  // used if anim_in == "custom"
-	std::string custom_anim_out; // used if anim_out == "custom"
+	// Optional font sizes (px). Used by {{TITLE_SIZE}} / {{SUBTITLE_SIZE}} placeholders.
+	int title_size = 46;
+	int subtitle_size = 24;
+
+	std::string anim_in;  // animate.css class OR "custom_handled_in"
+	std::string anim_out; // animate.css class OR "custom_handled_out"
 
 	std::string font_family;
 	std::string lt_position; // class name: e.g. "lt-pos-bottom-left"

@@ -438,10 +438,11 @@ static lower_third_cfg default_cfg()
 	c.subtitle = "Subtitle";
 	c.profile_picture.clear();
 
+	c.title_size = 46;
+	c.subtitle_size = 24;
+
 	c.anim_in = "animate__fadeInUp";
 	c.anim_out = "animate__fadeOutDown";
-	c.custom_anim_in.clear();
-	c.custom_anim_out.clear();
 
 	c.font_family = "Inter";
 	c.lt_position = "lt-pos-bottom-left";
@@ -488,8 +489,8 @@ static lower_third_cfg default_cfg()
   display: none !important;
 }
 
-.slt-title { font-weight: 700; font-size: 46px; line-height: 1.1; }
-.slt-subtitle { opacity: 0.9; font-size: 24px; margin-top: 2px; }
+.slt-title { font-weight: 700; font-size: {{TITLE_SIZE}}px; line-height: 1.1; }
+.slt-subtitle { opacity: 0.9; font-size: {{SUBTITLE_SIZE}}px; margin-top: 2px; }
 )CSS";
 
 	c.js_template = "// Custom JS logic here";
@@ -501,15 +502,15 @@ static lower_third_cfg default_cfg()
 
 static std::string resolve_in_class(const lower_third_cfg &c)
 {
-	if (c.anim_in == "custom")
-		return c.custom_anim_in;
+	if (c.anim_in == "custom_handled_in")
+		return std::string();
 	return c.anim_in;
 }
 
 static std::string resolve_out_class(const lower_third_cfg &c)
 {
-	if (c.anim_out == "custom")
-		return c.custom_anim_out;
+	if (c.anim_out == "custom_handled_out")
+		return std::string();
 	return c.anim_out;
 }
 
@@ -549,6 +550,8 @@ static std::string scope_css_best_effort(const lower_third_cfg &c)
 	css = replace_all(css, "{{RADIUS}}", std::to_string(c.radius));
 	css = replace_all(css, "{{TEXT_COLOR}}", c.text_color);
 	css = replace_all(css, "{{FONT_FAMILY}}", c.font_family.empty() ? "Inter" : c.font_family);
+	css = replace_all(css, "{{TITLE_SIZE}}", std::to_string(c.title_size));
+	css = replace_all(css, "{{SUBTITLE_SIZE}}", std::to_string(c.subtitle_size));
 
 	if (css.find("#" + c.id) != std::string::npos) {
 		return "/* ---- " + c.id + " ---- */\n" + css + "\n";
@@ -593,97 +596,76 @@ static std::string scope_css_best_effort(const lower_third_cfg &c)
 
 static std::string build_base_script(const std::vector<lower_third_cfg> &items)
 {
+	// Build per-item animation config map consumed by the base JS.
+	// Custom Handled contract:
+	//   - For IN:  attach root.__slt_show() on the <li>
+	//   - For OUT: attach root.__slt_hide() and return a Promise that resolves when exit finishes
 	std::string map = "{\n";
 	for (const auto &c : items) {
-		const std::string inC = resolve_in_class(c);
-		const std::string outC = resolve_out_class(c);
-		int delay = 0;
-		const bool customMode = (c.anim_in == "custom") || (c.anim_out == "custom");
+		const bool inCustom  = (c.anim_in == "custom_handled_in");
+		const bool outCustom = (c.anim_out == "custom_handled_out");
 
-		map += "    \"" + c.id +
-		       "\": { "
-		       "mode: \""+ std::string(customMode ? "custom" : "builtin") + "\", "
-		       "inCls: " +
-		       (inC.empty() ? "null" : ("\"" + inC + "\"")) +
-		       ", outCls: " + (outC.empty() ? "null" : ("\"" + outC + "\"")) +
-		       ", delay: " + std::to_string(delay) + " },\n";
+		const std::string inCls  = inCustom ? std::string() : c.anim_in;
+		const std::string outCls = outCustom ? std::string() : c.anim_out;
+
+		int delay = 0;
+
+		map += "  \"" + c.id + "\": { "
+		       "inCustom: " + std::string(inCustom ? "true" : "false") + ", "
+		       "outCustom: " + std::string(outCustom ? "true" : "false") + ", "
+		       "inCls: " + (inCls.empty() ? "null" : ("\"" + inCls + "\"")) + ", "
+		       "outCls: " + (outCls.empty() ? "null" : ("\"" + outCls + "\"")) + ", "
+		       "delay: " + std::to_string(delay) + " },\n";
 	}
-	map += "  };\n";
+	map += "};\n";
 
 	return std::string(R"JS(
-/* Smart Lower Thirds – Animation Script (lifecycle + race-safe) */
+/* Smart Lower Thirds – Base Animation Script (simple polling + per-item transition lock) */
 (() => {
   const VISIBLE_URL = "./lt-visible.json";
   const animMap = )JS") +
-	       map + R"JS(
+	       map +
+	       std::string(R"JS(
 
-  // Safety bounds (avoid deadlocks)
-  const MAX_HOOK_WAIT_MS = 1200;
-  const MAX_ANIM_WAIT_MS = 1600;
+  // Safety bounds (avoid deadlocks if a template forgets to resolve)
+  const MAX_CUSTOM_WAIT_MS = 8000;
+  const MAX_ANIM_WAIT_MS   = 2000;
 
-  function stripAnimate(el) {
-    el.classList.remove("animate__animated");
-    el.style.animationDelay = "";
-    el.style.animationDuration = "";
-    el.style.animationTimingFunction = "";
-    [...el.classList].forEach(c => {
-      if (c.startsWith("animate__")) el.classList.remove(c);
-    });
-  }
-
-  function hasAnim(cls) {
-    return cls && String(cls).trim().length > 0;
-  }
+  function hasAnim(v) { return v && String(v).trim().length > 0; }
 
   function getHook(el, name) {
     const fn = el && el[name];
     return (typeof fn === "function") ? fn : null;
   }
 
-  function markWant(el, shouldShow) {
-    el.dataset.want = shouldShow ? "1" : "0";
+  function stripAnimate(el) {
+    // Remove only what we might have applied (do not destroy author classes).
+    try { el.classList.remove("animate__animated"); } catch (e) {}
+    const added = Array.isArray(el.__slt_added) ? el.__slt_added : [];
+    for (const c of added) {
+      try { el.classList.remove(c); } catch (e) {}
+    }
+    el.__slt_added = [];
+    el.style.animationDelay = "";
+    el.style.animationDuration = "";
+    el.style.animationTimingFunction = "";
   }
 
-  function wantsShow(el) { return el.dataset.want === "1"; }
-  function wantsHide(el) { return el.dataset.want === "0"; }
-
-  function isCustom(el, cfg) {
-    return (cfg && cfg.mode === "custom") || el.dataset.sltMode === "custom";
-  }
-
-  function dispatch(el, name, detail) {
-    try { el.dispatchEvent(new CustomEvent(name, { detail })); } catch (e) {}
-  }
-
-
-  function nextOp(el) {
-    el.__slt_op = (el.__slt_op || 0) + 1;
-    return el.__slt_op;
-  }
-
-  function ensureCurrent(el, op) {
-    if ((el.__slt_op || 0) !== op) throw new Error("superseded");
-  }
-
-  async function runHook(el, name, op) {
-    const fn = getHook(el, name);
-    if (!fn) return;
-
+  function addAnimClasses(el, cls) {
+    el.__slt_added = Array.isArray(el.__slt_added) ? el.__slt_added : [];
     try {
-      const r = fn();
-      if (r && typeof r.then === "function") {
-        await Promise.race([
-          r,
-          new Promise(res => setTimeout(res, MAX_HOOK_WAIT_MS))
-        ]);
-      }
+      el.classList.add("animate__animated");
+      el.__slt_added.push("animate__animated");
     } catch (e) {}
 
-    ensureCurrent(el, op);
+    String(cls).split(/\s+/).filter(Boolean).forEach(c => {
+      try { el.classList.add(c); } catch (e) {}
+      el.__slt_added.push(c);
+    });
   }
 
-  function waitForOwnAnimationEnd(el, op) {
-    return new Promise(resolve => {
+  function waitOwnAnimationEnd(el, timeoutMs) {
+    return new Promise((resolve) => {
       let done = false;
 
       const cleanup = () => {
@@ -693,199 +675,131 @@ static std::string build_base_script(const std::vector<lower_third_cfg> &items)
       };
 
       const onEnd = (ev) => {
-        // Only end when the <li> itself ends its animation (ignore child animation events)
+        // Only end when the <li> itself ends its animation (ignore child animations)
         if (ev.target !== el) return;
         cleanup();
-        resolve(true);
+        resolve();
       };
 
-      // Capture = true so we still receive it even if user scripts stop propagation
       el.addEventListener("animationend", onEnd, true);
-
-      // Failsafe (e.g., missing animate.css or browser quirks)
-      setTimeout(() => {
-        if (!done) {
-          cleanup();
-          resolve(true);
-        }
-      }, MAX_ANIM_WAIT_MS);
-    }).then(() => {
-      ensureCurrent(el, op);
-      return true;
+      setTimeout(() => { cleanup(); resolve(); }, timeoutMs);
     });
   }
 
+  async function runHookWithTimeout(el, name, timeoutMs) {
+    const fn = getHook(el, name);
+    if (!fn) return;
 
-  async function runCustomShow(el, cfg) {
-    const op = nextOp(el);
-    if (!wantsShow(el)) return;
-
-    el.dataset.state = "showing";
-
-    // Mount element into layout without touching opacity/transform.
-    // Custom CSS/JS owns all visual/animation properties.
-    el.style.display = "block";
-    el.classList.remove("slt-hidden");
-    el.classList.remove("slt-visible"); // avoid display forcing clashes
-
-    dispatch(el, "slt:show", { id: el.id, op });
-
-    // Preferred custom hook
-    await runHook(el, "__slt_show", op);
-
-    if (!wantsShow(el)) return;
-
-    el.dataset.state = "visible";
+    try {
+      const ret = fn.call(el);
+      if (ret && typeof ret.then === "function") {
+        await Promise.race([
+          ret,
+          new Promise(res => setTimeout(res, timeoutMs))
+        ]);
+      }
+    } catch (e) {
+      // Swallow template errors: base script must remain operational.
+    }
   }
 
-  async function runCustomHide(el, cfg) {
-    const op = nextOp(el);
-    if (!wantsHide(el)) return;
-
-    el.dataset.state = "hiding";
-
-    dispatch(el, "slt:hide", { id: el.id, op });
-
-    // Preferred custom hook
-    await runHook(el, "__slt_hide", op);
-
-    if (!wantsHide(el)) return;
-
-    el.dataset.state = "hidden";
-
-    // Default: fully unmount after custom hide completes.
-    // Authors can opt out by setting data-slt-auto-display="0" on the <li>.
-    if (el.dataset.sltAutoDisplay !== "0") {
+  function setMounted(el, mounted) {
+    if (mounted) {
+      el.style.display = "block";
+      el.classList.add("slt-visible");
+      el.classList.remove("slt-hidden");
+    } else {
+      el.classList.remove("slt-visible");
+      el.classList.add("slt-hidden");
       el.style.display = "none";
     }
   }
 
-  async function applyIn(el, cfg) {
-    const op = nextOp(el);
-
-    // If intent changed already, abort.
-    if (!wantsShow(el)) return;
-
-    el.dataset.state = "showing";
-
-    // Cancel any in-flight out animation visually and force displayed
+  async function doShow(el, cfg) {
+    setMounted(el, true);
     stripAnimate(el);
-    el.classList.remove("slt-hidden");
-    el.classList.add("slt-visible");
 
-    if (hasAnim(cfg.inCls)) {
-      if (cfg.delay > 0) el.style.animationDelay = cfg.delay + "ms";
-
-      el.classList.add("animate__animated");
-      cfg.inCls.split(/\s+/).forEach(c => el.classList.add(c));
-
-      await waitForOwnAnimationEnd(el, op);
-
-      // Might have been superseded or intent flipped
-      if (!wantsShow(el)) return;
-
-      el.dataset.state = "visible";
-      el.style.animationDelay = "";
-    } else {
-      el.dataset.state = "visible";
+    if (cfg && cfg.inCustom) {
+      await runHookWithTimeout(el, "__slt_show", MAX_CUSTOM_WAIT_MS);
+      return;
     }
 
-    // Lifecycle: after shown (template may run inner sequencing)
-    await runHook(el, "__slt_onShown", op);
-
-    // Final sanity: don't force visible if user toggled hide during hook
-    if (!wantsShow(el)) return;
-
-    el.dataset.state = "visible";
-    el.classList.remove("slt-hidden");
-    el.classList.add("slt-visible");
+    if (cfg && hasAnim(cfg.inCls)) {
+      if (cfg.delay > 0) el.style.animationDelay = cfg.delay + "ms";
+      addAnimClasses(el, cfg.inCls);
+      await waitOwnAnimationEnd(el, MAX_ANIM_WAIT_MS);
+      stripAnimate(el);
+      el.style.animationDelay = "";
+    }
   }
 
-  async function applyOut(el, cfg) {
-    const op = nextOp(el);
-
-    // If intent changed already, abort.
-    if (!wantsHide(el)) return;
-
-    // Lifecycle: template can animate inner exit BEFORE parent out anim
-    el.dataset.state = "hiding_pending";
-    await runHook(el, "__slt_beforeHide", op);
-
-    // If user toggled back to show while we waited, abort hide.
-    if (!wantsHide(el)) return;
-
-    el.dataset.state = "hiding";
-
-    // Ensure we start parent out cleanly (remove any in classes)
+  async function doHide(el, cfg) {
     stripAnimate(el);
 
-    if (hasAnim(cfg.outCls)) {
-      el.classList.add("animate__animated");
-      cfg.outCls.split(/\s+/).forEach(c => el.classList.add(c));
-
-      await waitForOwnAnimationEnd(el, op);
-
-      // If user toggled show during parent out, abort final hide.
-      if (!wantsHide(el)) return;
-
-      stripAnimate(el);
-      el.classList.remove("slt-visible");
-      el.classList.add("slt-hidden");
-      el.dataset.state = "hidden";
-    } else {
-      el.classList.remove("slt-visible");
-      el.classList.add("slt-hidden");
-      el.dataset.state = "hidden";
+    if (cfg && cfg.outCustom) {
+      // Wait for the template-driven exit animation before unmounting the <li>
+      await runHookWithTimeout(el, "__slt_hide", MAX_CUSTOM_WAIT_MS);
+      setMounted(el, false);
+      return;
     }
+
+    if (cfg && hasAnim(cfg.outCls)) {
+      addAnimClasses(el, cfg.outCls);
+      await waitOwnAnimationEnd(el, MAX_ANIM_WAIT_MS);
+      stripAnimate(el);
+    }
+
+    setMounted(el, false);
+  }
+
+  function enqueue(el, job) {
+    // Serialize transitions per <li> so polling never overlaps operations.
+    el.__slt_queue = (el.__slt_queue || Promise.resolve())
+      .then(job)
+      .catch(() => {}); // never break the chain
   }
 
   async function tick() {
+    let visibleIds;
     try {
       const r = await fetch(VISIBLE_URL + "?t=" + Date.now(), { cache: "no-store" });
-      const visibleIds = await r.json();
+      visibleIds = await r.json();
       if (!Array.isArray(visibleIds)) return;
+    } catch (e) {
+      return;
+    }
 
-      const visibleSet = new Set(visibleIds.map(String));
-      const els = Array.from(document.querySelectorAll("#slt-root > li[id]"));
+    const visibleSet = new Set(visibleIds.map(String));
+    const els = Array.from(document.querySelectorAll("#slt-root > li[id]"));
 
-      // Pass 1: update intent for all elements (prevents per-element races)
-      for (const el of els) {
-        markWant(el, visibleSet.has(el.id));
-      }
+    for (const el of els) {
+      const cfg = animMap[el.id] || {};
+      const want = visibleSet.has(el.id);
 
-      // Pass 2: drive state machine (fire-and-forget; op token makes it safe)
-      for (const el of els) {
-        const cfg = animMap[el.id] || {};
-        const shouldShow = wantsShow(el);
-        const state = el.dataset.state || "hidden";
+      // Store desired state
+      el.dataset.want = want ? "1" : "0";
 
-        // Custom mode: the template fully owns all visual state/animation.
-        // Base script only signals lifecycle and (optionally) mounts/unmounts.
-        if (isCustom(el, cfg)) {
-          if (shouldShow) {
-            if (state !== "visible" && state !== "showing") {
-              runCustomShow(el, cfg);
-            }
-          } else {
-            if (state !== "hidden" && state !== "hiding") {
-              runCustomHide(el, cfg);
-            }
-          }
-          continue;
+      const isMounted = el.classList.contains("slt-visible") || el.style.display === "block";
+
+      // Already in desired mounted state
+      if (want && isMounted) continue;
+      if (!want && !isMounted) continue;
+
+      // Avoid enqueuing duplicates while one is active
+      if (el.dataset.busy === "1") continue;
+
+      el.dataset.busy = "1";
+      enqueue(el, async () => {
+        try {
+          // Re-check desire at execution time (poll may have changed)
+          const stillWant = el.dataset.want === "1";
+          if (stillWant) await doShow(el, cfg);
+          else await doHide(el, cfg);
+        } finally {
+          el.dataset.busy = "0";
         }
-
-        // Built-in mode (animate.css): base script owns the animation + visibility classes.
-        if (shouldShow) {
-          if (state !== "visible" && state !== "showing") {
-            applyIn(el, cfg);
-          }
-        } else {
-          if (state !== "hidden" && state !== "hiding" && state !== "hiding_pending") {
-            applyOut(el, cfg);
-          }
-        }
-      }
-    } catch (e) {}
+      });
+    }
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -893,7 +807,7 @@ static std::string build_base_script(const std::vector<lower_third_cfg> &items)
     setInterval(tick, 350);
   });
 })();
-)JS";
+)JS");
 }
 
 static std::string build_item_script(const lower_third_cfg &c)
@@ -949,7 +863,7 @@ static std::string build_full_html()
 			inner = replace_all(inner, "<img ", "<img onerror=\"this.style.display='none'\" ");
 		}
 
-		const bool customMode = (c.anim_in == "custom") || (c.anim_out == "custom");
+		const bool customMode = (c.anim_in == "custom_handled_in") || (c.anim_out == "custom_handled_out");
 
 		html += "  <li id=\"" + c.id + "\" class=\"" + c.lt_position + "\"" +
 		        (customMode ? " data-slt-mode=\"custom\"" : "") + ">";
@@ -1227,10 +1141,13 @@ bool load_state_json()
 		c.subtitle = o.value("subtitle").toString().toStdString();
 		c.profile_picture = o.value("profile_picture").toString().toStdString();
 
+		c.title_size = o.value("title_size").toInt(46);
+		c.subtitle_size = o.value("subtitle_size").toInt(24);
+		c.title_size = std::max(6, std::min(200, c.title_size));
+		c.subtitle_size = std::max(6, std::min(200, c.subtitle_size));
+
 		c.anim_in = o.value("anim_in").toString().toStdString();
 		c.anim_out = o.value("anim_out").toString().toStdString();
-		c.custom_anim_in = o.value("custom_anim_in").toString().toStdString();
-		c.custom_anim_out = o.value("custom_anim_out").toString().toStdString();
 
 		c.font_family = o.value("font_family").toString().toStdString();
 		c.lt_position = o.value("lt_position").toString().toStdString();
@@ -1412,8 +1329,6 @@ bool save_state_json()
 
 		o["anim_in"] = QString::fromStdString(c.anim_in);
 		o["anim_out"] = QString::fromStdString(c.anim_out);
-		o["custom_anim_in"] = QString::fromStdString(c.custom_anim_in);
-		o["custom_anim_out"] = QString::fromStdString(c.custom_anim_out);
 
 		o["font_family"] = QString::fromStdString(c.font_family);
 		o["lt_position"] = QString::fromStdString(c.lt_position);
@@ -1593,6 +1508,8 @@ bool regenerate_merged_css_js()
 		per = replace_all(per, "{{RADIUS}}", std::to_string(c.radius));
 		per = replace_all(per, "{{TEXT_COLOR}}", c.text_color);
 		per = replace_all(per, "{{FONT_FAMILY}}", c.font_family.empty() ? "Inter" : c.font_family);
+		per = replace_all(per, "{{TITLE_SIZE}}", std::to_string(c.title_size));
+		per = replace_all(per, "{{SUBTITLE_SIZE}}", std::to_string(c.subtitle_size));
 
 		// Extract keyframes so scope_css_best_effort never touches 0%/from/to selectors.
 		std::vector<extracted_keyframes> extracted;

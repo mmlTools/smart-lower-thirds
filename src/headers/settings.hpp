@@ -94,7 +94,7 @@ inline const std::vector<CbxOption> AnimInOptions = {
 	{"Jello", "animate__jello"},
 	{"Heart Beat", "animate__heartBeat"},
 
-	{"Custom (CSS class)", "custom"},
+	{"Custom Handled In", "custom_handled_in"},
 };
 
 inline const std::vector<CbxOption> AnimOutOptions = {
@@ -154,7 +154,7 @@ inline const std::vector<CbxOption> AnimOutOptions = {
 	{"Hinge", "animate__hinge"},
 	{"Roll Out", "animate__rollOut"},
 
-	{"Custom (CSS class)", "custom"},
+	{"Custom Handled Out", "custom_handled_out"},
 };
 
 inline const std::vector<CbxOption> LtPositionOptions = {
@@ -194,7 +194,6 @@ private:
 	void saveToState();
 
 	void openTemplateEditorDialog(const QString &title, QPlainTextEdit *sourceEdit);
-	void updateCustomAnimFieldsVisibility();
 	void updateColorButton(QPushButton *btn, const QColor &c);
 
 private:
@@ -211,12 +210,9 @@ private:
 
 	QComboBox *animInCombo = nullptr;
 	QComboBox *animOutCombo = nullptr;
-	QLabel *customAnimInLabel = nullptr;
-	QLabel *customAnimOutLabel = nullptr;
-	QLineEdit *customAnimInEdit = nullptr;
-	QLineEdit *customAnimOutEdit = nullptr;
-
 	QFontComboBox *fontCombo = nullptr;
+	QSpinBox *titleSizeSpin = nullptr;
+	QSpinBox *subtitleSizeSpin = nullptr;
 	QComboBox *posCombo = nullptr;
 
 	QPushButton *bgColorBtn = nullptr;

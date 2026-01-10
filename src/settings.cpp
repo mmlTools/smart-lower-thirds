@@ -269,20 +269,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		g->addWidget(animOutCombo, row, 3);
 
 		row++;
-		customAnimInLabel = new QLabel(tr("Custom In class:"), this);
-		customAnimInEdit = new QLineEdit(this);
-		customAnimInEdit->setPlaceholderText(tr("e.g. myFadeIn"));
-
-		customAnimOutLabel = new QLabel(tr("Custom Out class:"), this);
-		customAnimOutEdit = new QLineEdit(this);
-		customAnimOutEdit->setPlaceholderText(tr("e.g. myFadeOut"));
-
-		g->addWidget(customAnimInLabel, row, 0);
-		g->addWidget(customAnimInEdit, row, 1);
-		g->addWidget(customAnimOutLabel, row, 2);
-		g->addWidget(customAnimOutEdit, row, 3);
-
-		row++;
 		g->addWidget(new QLabel(tr("Font:"), this), row, 0);
 		fontCombo = new QFontComboBox(this);
 		fontCombo->setEditable(false);
@@ -293,6 +279,19 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		for (const auto &opt : LtPositionOptions)
 			posCombo->addItem(tr(opt.label), QString::fromUtf8(opt.value));
 		g->addWidget(posCombo, row, 3);
+
+		row++;
+		g->addWidget(new QLabel(tr("Title size (px):"), this), row, 2);
+		titleSizeSpin = new QSpinBox(this);
+		titleSizeSpin->setRange(6, 200);
+		titleSizeSpin->setToolTip(tr("Font size in pixels for {{TITLE_SIZE}} placeholder"));
+		g->addWidget(titleSizeSpin, row, 1);
+
+		g->addWidget(new QLabel(tr("Subtitle size (px):"), this), row, 0);
+		subtitleSizeSpin = new QSpinBox(this);
+		subtitleSizeSpin->setRange(6, 200);
+		subtitleSizeSpin->setToolTip(tr("Font size in pixels for {{SUBTITLE_SIZE}} placeholder"));
+		g->addWidget(subtitleSizeSpin, row, 3);
 
 		row++;
 		g->addWidget(new QLabel(tr("Background:"), this), row, 0);
@@ -444,13 +443,6 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		connect(buttonBox, &QDialogButtonBox::accepted, this, &LowerThirdSettingsDialog::onSaveAndApply);
 		connect(applyBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onSaveAndApply);
 	}
-
-	connect(customAnimInEdit, &QLineEdit::textChanged, this,
-		[this](const QString &) { updateCustomAnimFieldsVisibility(); });
-	connect(customAnimOutEdit, &QLineEdit::textChanged, this,
-		[this](const QString &) { updateCustomAnimFieldsVisibility(); });
-
-	updateCustomAnimFieldsVisibility();
 }
 
 LowerThirdSettingsDialog::~LowerThirdSettingsDialog()
@@ -479,6 +471,11 @@ void LowerThirdSettingsDialog::loadFromState()
 		labelEdit->setText(QString::fromStdString(cfg->label));
 	subtitleEdit->setText(QString::fromStdString(cfg->subtitle));
 
+	if (titleSizeSpin)
+		titleSizeSpin->setValue(cfg->title_size);
+	if (subtitleSizeSpin)
+		subtitleSizeSpin->setValue(cfg->subtitle_size);
+
 	auto setCombo = [](QComboBox *cb, const QString &v) {
 		const int idx = cb->findData(v);
 		cb->setCurrentIndex(idx >= 0 ? idx : 0);
@@ -486,9 +483,6 @@ void LowerThirdSettingsDialog::loadFromState()
 
 	setCombo(animInCombo, QString::fromStdString(cfg->anim_in));
 	setCombo(animOutCombo, QString::fromStdString(cfg->anim_out));
-
-	customAnimInEdit->setText(QString::fromStdString(cfg->custom_anim_in));
-	customAnimOutEdit->setText(QString::fromStdString(cfg->custom_anim_out));
 
 	if (!cfg->font_family.empty())
 		fontCombo->setCurrentFont(QFont(QString::fromStdString(cfg->font_family)));
@@ -550,7 +544,6 @@ void LowerThirdSettingsDialog::loadFromState()
 	}
 
 	pendingProfilePicturePath.clear();
-	updateCustomAnimFieldsVisibility();
 }
 
 void LowerThirdSettingsDialog::saveToState()
@@ -569,8 +562,6 @@ void LowerThirdSettingsDialog::saveToState()
 
 	cfg->anim_in = animInCombo->currentData().toString().toStdString();
 	cfg->anim_out = animOutCombo->currentData().toString().toStdString();
-	cfg->custom_anim_in = customAnimInEdit->text().toStdString();
-	cfg->custom_anim_out = customAnimOutEdit->text().toStdString();
 
 	cfg->font_family = fontCombo->currentFont().family().toStdString();
 	cfg->lt_position = posCombo->currentData().toString().toStdString();
@@ -721,27 +712,8 @@ void LowerThirdSettingsDialog::onPickTextColor()
 	updateColorButton(textColorBtn, c);
 }
 
-void LowerThirdSettingsDialog::updateCustomAnimFieldsVisibility()
-{
-	const QString key = QStringLiteral("custom");
-	const bool inCustom = (animInCombo->currentData().toString() == key);
-	const bool outCustom = (animOutCombo->currentData().toString() == key);
-
-	customAnimInLabel->setVisible(inCustom);
-	customAnimInEdit->setVisible(inCustom);
-
-	customAnimOutLabel->setVisible(outCustom);
-	customAnimOutEdit->setVisible(outCustom);
-}
-
-void LowerThirdSettingsDialog::onAnimInChanged(int)
-{
-	updateCustomAnimFieldsVisibility();
-}
-void LowerThirdSettingsDialog::onAnimOutChanged(int)
-{
-	updateCustomAnimFieldsVisibility();
-}
+void LowerThirdSettingsDialog::onAnimInChanged(int) {}
+void LowerThirdSettingsDialog::onAnimOutChanged(int) {}
 
 void LowerThirdSettingsDialog::updateColorButton(QPushButton *btn, const QColor &c)
 {
@@ -824,10 +796,10 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 	QJsonObject o;
 	o["title"] = QString::fromStdString(cfg->title);
 	o["subtitle"] = QString::fromStdString(cfg->subtitle);
+	o["title_size"] = cfg->title_size;
+	o["subtitle_size"] = cfg->subtitle_size;
 	o["anim_in"] = QString::fromStdString(cfg->anim_in);
 	o["anim_out"] = QString::fromStdString(cfg->anim_out);
-	o["custom_anim_in"] = QString::fromStdString(cfg->custom_anim_in);
-	o["custom_anim_out"] = QString::fromStdString(cfg->custom_anim_out);
 	o["font_family"] = QString::fromStdString(cfg->font_family);
 	o["lt_position"] = QString::fromStdString(cfg->lt_position);
 	o["bg_color"] = QString::fromStdString(cfg->bg_color);
@@ -916,10 +888,12 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 
 	cfg->title = obj.value("title").toString().toStdString();
 	cfg->subtitle = obj.value("subtitle").toString().toStdString();
+	cfg->title_size = obj.value("title_size").toInt(cfg->title_size);
+	cfg->subtitle_size = obj.value("subtitle_size").toInt(cfg->subtitle_size);
+	cfg->title_size = std::max(6, std::min(200, cfg->title_size));
+	cfg->subtitle_size = std::max(6, std::min(200, cfg->subtitle_size));
 	cfg->anim_in = obj.value("anim_in").toString().toStdString();
 	cfg->anim_out = obj.value("anim_out").toString().toStdString();
-	cfg->custom_anim_in = obj.value("custom_anim_in").toString().toStdString();
-	cfg->custom_anim_out = obj.value("custom_anim_out").toString().toStdString();
 	cfg->font_family = obj.value("font_family").toString().toStdString();
 	cfg->lt_position = obj.value("lt_position").toString().toStdString();
 	cfg->bg_color = obj.value("bg_color").toString().toStdString();
