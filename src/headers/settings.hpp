@@ -16,6 +16,7 @@ class QLabel;
 class QTabWidget;
 class QSpinBox;
 class QSlider;
+class QColor;
 
 namespace smart_lt::ui {
 
@@ -180,6 +181,7 @@ private slots:
 	void onPickTextColor();
 
 	void onImportTemplateClicked();
+	void onInfoClicked();
 	void onExportTemplateClicked();
 
 	void onOpenHtmlEditorDialog();
@@ -213,6 +215,8 @@ private:
 	QFontComboBox *fontCombo = nullptr;
 	QSpinBox *titleSizeSpin = nullptr;
 	QSpinBox *subtitleSizeSpin = nullptr;
+	QSpinBox *avatarWidthSpin = nullptr;
+	QSpinBox *avatarHeightSpin = nullptr;
 	QComboBox *posCombo = nullptr;
 
 	QPushButton *bgColorBtn = nullptr;
@@ -228,6 +232,7 @@ private:
 
 	QPushButton *importBtn = nullptr;
 	QPushButton *exportBtn = nullptr;
+	QPushButton *infoBtn = nullptr;
 
 	QDialogButtonBox *buttonBox = nullptr;
 

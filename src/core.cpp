@@ -441,6 +441,10 @@ static lower_third_cfg default_cfg()
 	c.title_size = 46;
 	c.subtitle_size = 24;
 
+	c.avatar_width = 100;
+	c.avatar_height = 100;
+
+
 	c.anim_in = "animate__fadeInUp";
 	c.anim_out = "animate__fadeOutDown";
 
@@ -478,7 +482,7 @@ static lower_third_cfg default_cfg()
 }
 
 .slt-avatar {
-  width: 100px; height: 100px; border-radius: 50%;
+  width: {{AVATAR_WIDTH}}px; height: {{AVATAR_HEIGHT}}px; border-radius: 50%;
   object-fit: cover; background: rgba(255,255,255,0.08);
   flex-shrink: 0;
 }
@@ -552,6 +556,8 @@ static std::string scope_css_best_effort(const lower_third_cfg &c)
 	css = replace_all(css, "{{FONT_FAMILY}}", c.font_family.empty() ? "Inter" : c.font_family);
 	css = replace_all(css, "{{TITLE_SIZE}}", std::to_string(c.title_size));
 	css = replace_all(css, "{{SUBTITLE_SIZE}}", std::to_string(c.subtitle_size));
+	css = replace_all(css, "{{AVATAR_WIDTH}}", std::to_string(c.avatar_width));
+	css = replace_all(css, "{{AVATAR_HEIGHT}}", std::to_string(c.avatar_height));
 
 	if (css.find("#" + c.id) != std::string::npos) {
 		return "/* ---- " + c.id + " ---- */\n" + css + "\n";
@@ -1146,6 +1152,11 @@ bool load_state_json()
 		c.title_size = std::max(6, std::min(200, c.title_size));
 		c.subtitle_size = std::max(6, std::min(200, c.subtitle_size));
 
+		c.avatar_width = o.value("avatar_width").toInt(100);
+		c.avatar_height = o.value("avatar_height").toInt(100);
+		c.avatar_width = std::max(10, std::min(400, c.avatar_width));
+		c.avatar_height = std::max(10, std::min(400, c.avatar_height));
+
 		c.anim_in = o.value("anim_in").toString().toStdString();
 		c.anim_out = o.value("anim_out").toString().toStdString();
 
@@ -1326,6 +1337,11 @@ bool save_state_json()
 		o["title"] = QString::fromStdString(c.title);
 		o["subtitle"] = QString::fromStdString(c.subtitle);
 		o["profile_picture"] = QString::fromStdString(c.profile_picture);
+
+		o["title_size"] = c.title_size;
+		o["subtitle_size"] = c.subtitle_size;
+		o["avatar_width"] = c.avatar_width;
+		o["avatar_height"] = c.avatar_height;
 
 		o["anim_in"] = QString::fromStdString(c.anim_in);
 		o["anim_out"] = QString::fromStdString(c.anim_out);

@@ -49,6 +49,10 @@ struct lower_third_cfg {
 	int title_size = 46;
 	int subtitle_size = 24;
 
+	// Optional avatar size (px). Used by {{AVATAR_WIDTH}} / {{AVATAR_HEIGHT}} placeholders.
+	int avatar_width = 100;
+	int avatar_height = 100;
+
 	std::string anim_in;  // animate.css class OR "custom_handled_in"
 	std::string anim_out; // animate.css class OR "custom_handled_out"
 
