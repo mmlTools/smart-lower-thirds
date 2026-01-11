@@ -10,6 +10,8 @@
 #include <unordered_set>
 #include <unordered_map>
 
+#include <chrono>
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -20,6 +22,8 @@
 
 #include <obs.h>
 #include <obs-module.h>
+#include <filesystem>
+#include <system_error>
 
 namespace smart_lt {
 
@@ -2175,6 +2179,47 @@ std::string clone_lower_third(const std::string &id)
 	else
 		c.label += " (Copy)";
 
+	// If the source lower third has an owned profile picture copied into output_dir,
+	// clone it as well so each item owns its file lifecycle. Otherwise removing one
+	// item could delete the image used by the other.
+	if (!c.profile_picture.empty()) {
+		const std::string srcRel = c.profile_picture;
+		const std::string srcPath = output_dir() + "/" + srcRel;
+
+		// Derive extension (if any)
+		std::string ext;
+		const auto dot = srcRel.find_last_of('.');
+		if (dot != std::string::npos && dot + 1 < srcRel.size())
+			ext = srcRel.substr(dot + 1);
+
+		// New unique name based on new id + timestamp
+		using namespace std::chrono;
+		const auto ts = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+		std::string newName = c.id + "_" + std::to_string((long long)ts);
+		if (!ext.empty())
+			newName += "." + ext;
+
+		const std::string dstPath = output_dir() + "/" + newName;
+
+		std::error_code ec;
+		if (std::filesystem::exists(std::filesystem::path(srcPath), ec) && !ec) {
+			ec.clear();
+			std::filesystem::copy_file(std::filesystem::path(srcPath), std::filesystem::path(dstPath),
+						  std::filesystem::copy_options::overwrite_existing, ec);
+			if (!ec) {
+				c.profile_picture = newName;
+			} else {
+				LOGW("clone_lower_third: failed to copy profile picture '%s' -> '%s' (%d)",
+				     srcPath.c_str(), dstPath.c_str(), (int)ec.value());
+				// Avoid sharing a file pointer to a different item's owned file.
+				c.profile_picture.clear();
+			}
+		} else {
+			// Source file missing; clear so the clone doesn't reference an invalid path.
+			c.profile_picture.clear();
+		}
+	}
+
 	int maxOrder = -1;
 	for (const auto &it : g_items)
 		maxOrder = std::max(maxOrder, it.order);
@@ -2229,6 +2274,15 @@ bool remove_lower_third(const std::string &id)
 	const std::string sid = sanitize_id(id);
 	const auto before = g_items.size();
 
+	// Capture owned media before erasing so we can clean it up.
+	std::string profileToDelete;
+	for (const auto &c : g_items) {
+		if (c.id == sid) {
+			profileToDelete = c.profile_picture;
+			break;
+		}
+	}
+
 	const bool wasVisible = is_visible(sid);
 
 	g_items.erase(std::remove_if(g_items.begin(), g_items.end(),
@@ -2238,6 +2292,14 @@ bool remove_lower_third(const std::string &id)
 	const bool removed = (g_items.size() != before);
 	if (!removed)
 		return false;
+
+	// Best-effort cleanup: remove the associated profile picture from disk.
+	// (These are generated/copied into output_dir with unique names.)
+	if (!profileToDelete.empty()) {
+		const std::string fullPath = output_dir() + "/" + profileToDelete;
+		std::error_code ec;
+		(void)std::filesystem::remove(std::filesystem::path(fullPath), ec);
+	}
 
 	set_visible_nosave(sid, false);
 

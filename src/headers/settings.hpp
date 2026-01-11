@@ -3,6 +3,8 @@
 
 #include <QDialog>
 #include <QString>
+#include <QMultiHash>
+#include <QPointer>
 #include <vector>
 
 class QLineEdit;
@@ -17,6 +19,8 @@ class QTabWidget;
 class QSpinBox;
 class QSlider;
 class QColor;
+class QListWidget;
+class QPixmap;
 
 namespace smart_lt::ui {
 
@@ -191,12 +195,18 @@ private slots:
 	void onAnimInChanged(int);
 	void onAnimOutChanged(int);
 
+	void onMarketplaceUpdated();
+	void onMarketplaceFailed(const QString &err);
+	void onMarketplaceImageReady(const QString &url, const QPixmap &pm);
+	void onMarketplaceImageFailed(const QString &url, const QString &err);
+
 private:
 	void loadFromState();
 	void saveToState();
 
 	void openTemplateEditorDialog(const QString &title, QPlainTextEdit *sourceEdit);
 	void updateColorButton(QPushButton *btn, const QColor &c);
+	void rebuildMarketplaceList();
 
 private:
 	QString currentId;
@@ -247,6 +257,12 @@ private:
 
 	QSpinBox *repeatEverySpin = nullptr;
 	QSpinBox *repeatVisibleSpin = nullptr;
+
+	// Marketplace (resources fetched from obscountdown.com)
+	QListWidget *marketList = nullptr;
+	QLabel *marketStatus = nullptr;
+	QPushButton *seeAllLowerThirdsBtn = nullptr;
+	QMultiHash<QString, QPointer<QLabel>> marketIconByUrl;
 };
 
 } // namespace smart_lt::ui

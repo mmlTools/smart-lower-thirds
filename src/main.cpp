@@ -1,6 +1,7 @@
 #define LOG_TAG "[" PLUGIN_NAME "][main]"
 #include "core.hpp"
 #include "dock.hpp"
+#include "headers/api.hpp"
 #include "websocket_bridge.hpp"
 
 #include <obs-frontend-api.h>
@@ -34,6 +35,8 @@ bool obs_module_load(void)
 void obs_module_post_load(void)
 {
 	smart_lt::ws::init();
+	// Marketplace preload (cached for 1h on disk; refresh is async).
+	smart_lt::api::ApiClient::instance().init();
 	if (auto *dock = LowerThird_get_dock()) {
 		QTimer::singleShot(250, dock, [dock]() { dock->refreshBrowserSources(); });
 		QTimer::singleShot(1000, dock, [dock]() { dock->refreshBrowserSources(); });

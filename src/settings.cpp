@@ -2,6 +2,8 @@
 #define LOG_TAG "[" PLUGIN_NAME "][settings]"
 #include "settings.hpp"
 
+#include "headers/api.hpp"
+
 #include "core.hpp"
 
 #include <obs.h>
@@ -37,6 +39,10 @@
 #include <QSizePolicy>
 #include <QSpinBox>
 #include <QSlider>
+
+#include <QDesktopServices>
+#include <QListWidget>
+#include <QUrl>
 
 #include <QListWidget>
 #include <QListWidgetItem>
@@ -332,6 +338,106 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 		connect(deleteProfilePictureBtn, &QPushButton::clicked, this,
 			&LowerThirdSettingsDialog::onDeleteProfilePicture);
 
+		// ------------------------------------------------------------
+		// Marketplace: curated Lower Thirds (fetched at launch; cached 1h)
+		// ------------------------------------------------------------
+		auto *marketBox = new QGroupBox(tr("Lower Thirds Library"), this);
+		auto *mv = new QVBoxLayout(marketBox);
+		mv->setSpacing(8);
+
+		// Hero / CTA banner
+		auto *hero = new QFrame(this);
+		hero->setObjectName(QStringLiteral("oc_marketHero"));
+		hero->setFrameShape(QFrame::NoFrame);
+		hero->setStyleSheet(QStringLiteral(
+			"#oc_marketHero {"
+			"  border: 1px solid rgba(255,255,255,0.10);"
+			"  border-radius: 10px;"
+			"  background: rgba(255,255,255,0.04);"
+			"  padding: 10px;"
+			"}"
+		));
+
+		auto *heroRow = new QHBoxLayout(hero);
+		heroRow->setContentsMargins(8, 8, 8, 8);
+		heroRow->setSpacing(10);
+
+		auto *heroIcon = new QLabel(this);
+		heroIcon->setFixedSize(40, 40);
+		heroIcon->setPixmap(style()->standardIcon(QStyle::SP_DirOpenIcon).pixmap(36, 36));
+		heroIcon->setAlignment(Qt::AlignCenter);
+		heroRow->addWidget(heroIcon);
+
+		auto *heroTextCol = new QVBoxLayout();
+		heroTextCol->setContentsMargins(0, 0, 0, 0);
+		heroTextCol->setSpacing(2);
+
+		auto *heroTitle = new QLabel(tr("Get new Lower Thirds instantly"), this);
+		heroTitle->setTextFormat(Qt::PlainText);
+		heroTitle->setStyleSheet(QStringLiteral("font-weight: 700;"));
+		heroTextCol->addWidget(heroTitle);
+
+		marketStatus = new QLabel(tr("Loading recommendations…"), this);
+		marketStatus->setWordWrap(true);
+		marketStatus->setStyleSheet(QStringLiteral("color: rgba(255,255,255,0.85);"));
+		heroTextCol->addWidget(marketStatus);
+		heroRow->addLayout(heroTextCol, 1);
+
+		seeAllLowerThirdsBtn = new QPushButton(tr("See all lower thirds"), this);
+		seeAllLowerThirdsBtn->setCursor(Qt::PointingHandCursor);
+		seeAllLowerThirdsBtn->setIcon(style()->standardIcon(QStyle::SP_ArrowRight));
+		seeAllLowerThirdsBtn->setToolTip(tr("Open the Lower Thirds marketplace in your browser"));
+		heroRow->addWidget(seeAllLowerThirdsBtn);
+
+		mv->addWidget(hero);
+
+		marketList = new QListWidget(this);
+		marketList->setSelectionMode(QAbstractItemView::SingleSelection);
+		marketList->setUniformItemSizes(false); // custom widgets
+		// Larger scrollable area for the curated list
+		marketList->setMinimumHeight(280);
+		marketList->setSpacing(6);
+		marketList->setStyleSheet(QStringLiteral(
+			"QListWidget {"
+			"  border: 1px solid rgba(255,255,255,0.10);"
+			"  border-radius: 10px;"
+			"  background: rgba(255,255,255,0.02);"
+			"  padding: 6px;"
+			"}"
+			"QListWidget::item { padding: 0px; margin: 0px; }"
+			"QListWidget::item:selected { background: transparent; }"
+		));
+		mv->addWidget(marketList, 1);
+
+		contentPageLayout->addWidget(marketBox);
+
+		// Click row to open resource
+		connect(marketList, &QListWidget::itemActivated, this, [](QListWidgetItem *it) {
+			if (!it)
+				return;
+			const QString url = it->data(Qt::UserRole).toString();
+			if (!url.isEmpty())
+				QDesktopServices::openUrl(QUrl(url));
+		});
+
+		connect(seeAllLowerThirdsBtn, &QPushButton::clicked, this, []() {
+			QDesktopServices::openUrl(QUrl(QStringLiteral("https://obscountdown.com/?type=lower-thirds-templates")));
+		});
+
+		// Wire API signals
+		auto &api = smart_lt::api::ApiClient::instance();
+		connect(&api, &smart_lt::api::ApiClient::lowerThirdsUpdated, this,
+			&LowerThirdSettingsDialog::onMarketplaceUpdated);
+		connect(&api, &smart_lt::api::ApiClient::lowerThirdsFailed, this,
+			&LowerThirdSettingsDialog::onMarketplaceFailed);
+		connect(&api, &smart_lt::api::ApiClient::imageReady, this,
+			&LowerThirdSettingsDialog::onMarketplaceImageReady);
+		connect(&api, &smart_lt::api::ApiClient::imageFailed, this,
+			&LowerThirdSettingsDialog::onMarketplaceImageFailed);
+
+		// Build immediately from whatever was preloaded
+		rebuildMarketplaceList();
+
 		contentPageLayout->addStretch(1);
 	}
 
@@ -609,8 +715,12 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 
 		buttonBox = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
 
-		auto *applyBtn = buttonBox->addButton(tr("Save && Apply"), QDialogButtonBox::AcceptRole);
+		// IMPORTANT: "Save && Apply" must NOT be an "accept" action, otherwise
+		// Qt may trigger both clicked() and accepted(), causing double execution.
+		auto *applyBtn = buttonBox->addButton(tr("Save && Apply"), QDialogButtonBox::ApplyRole);
 		applyBtn->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
+		applyBtn->setAutoDefault(false);
+		applyBtn->setDefault(false);
 
 		if (auto *cancelBtn = buttonBox->button(QDialogButtonBox::Cancel)) {
 			cancelBtn->setIcon(style()->standardIcon(QStyle::SP_DialogCancelButton));
@@ -622,11 +732,12 @@ LowerThirdSettingsDialog::LowerThirdSettingsDialog(QWidget *parent) : QDialog(pa
 
 		connect(importBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onImportTemplateClicked);
 		connect(exportBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onExportTemplateClicked);
-		connect(infoBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onInfoClicked);
+		// infoBtn is optional (depends on Templates UI variant)
+		if (infoBtn)
+			connect(infoBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onInfoClicked);
 
-		connect(buttonBox, &QDialogButtonBox::rejected, this, &LowerThirdSettingsDialog::reject);
-		connect(buttonBox, &QDialogButtonBox::accepted, this, &LowerThirdSettingsDialog::onSaveAndApply);
-		connect(applyBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onSaveAndApply);
+		connect(buttonBox, &QDialogButtonBox::rejected, this, &LowerThirdSettingsDialog::reject, Qt::UniqueConnection);
+		connect(applyBtn, &QPushButton::clicked, this, &LowerThirdSettingsDialog::onSaveAndApply, Qt::UniqueConnection);
 	}
 
 	// ------------------------------------------------------------
@@ -810,6 +921,16 @@ void LowerThirdSettingsDialog::saveToState()
 	cfg->repeat_every_sec = repeatEverySpin->value();
 	cfg->repeat_visible_sec = repeatVisibleSpin->value();
 
+	// Sizes (placeholders)
+	if (titleSizeSpin)
+		cfg->title_size = titleSizeSpin->value();
+	if (subtitleSizeSpin)
+		cfg->subtitle_size = subtitleSizeSpin->value();
+	if (avatarWidthSpin)
+		cfg->avatar_width = avatarWidthSpin->value();
+	if (avatarHeightSpin)
+		cfg->avatar_height = avatarHeightSpin->value();
+
 	cfg->html_template = htmlEdit->toPlainText().toStdString();
 	cfg->css_template = cssEdit->toPlainText().toStdString();
 	cfg->js_template = jsEdit->toPlainText().toStdString();
@@ -855,7 +976,8 @@ void LowerThirdSettingsDialog::onSaveAndApply()
 
 	smart_lt::rebuild_and_swap();
 
-	accept();
+	// Keep the dialog open (user often iterates), but provide clear feedback.
+	QMessageBox::information(this, tr("Saved"), tr("Lower third settings were saved and applied."));
 }
 
 void LowerThirdSettingsDialog::onBrowseProfilePicture()
@@ -936,6 +1058,195 @@ void LowerThirdSettingsDialog::onPickTextColor()
 
 void LowerThirdSettingsDialog::onAnimInChanged(int) {}
 void LowerThirdSettingsDialog::onAnimOutChanged(int) {}
+
+void LowerThirdSettingsDialog::onMarketplaceUpdated()
+{
+	rebuildMarketplaceList();
+}
+
+void LowerThirdSettingsDialog::onMarketplaceFailed(const QString &err)
+{
+	if (marketStatus) {
+		QString msg = err.trimmed();
+		if (msg.isEmpty())
+			msg = tr("Could not load recommendations.");
+		marketStatus->setText(tr("Recommendations unavailable: %1").arg(msg));
+	}
+	// Keep whatever is already in the list (cache might still exist).
+	rebuildMarketplaceList();
+}
+
+void LowerThirdSettingsDialog::onMarketplaceImageReady(const QString &url, const QPixmap &pm)
+{
+	const QString u = url.trimmed();
+	if (u.isEmpty())
+		return;
+
+	auto range = marketIconByUrl.equal_range(u);
+	for (auto it = range.first; it != range.second; ++it) {
+		QLabel *lab = it.value();
+		if (!lab)
+			continue;
+		lab->setPixmap(pm);
+	}
+}
+
+void LowerThirdSettingsDialog::onMarketplaceImageFailed(const QString &url, const QString &err)
+{
+	Q_UNUSED(url);
+	Q_UNUSED(err);
+}
+
+void LowerThirdSettingsDialog::rebuildMarketplaceList()
+{
+	if (!marketList)
+		return;
+
+	marketList->clear();
+	marketIconByUrl.clear();
+
+	auto &api = smart_lt::api::ApiClient::instance();
+	const auto items = api.lowerThirds();
+
+	if (marketStatus) {
+		if (!items.isEmpty()) {
+			marketStatus->setText(tr("Curated templates from obscountdown.com — click a card to preview."));
+		} else {
+			const QString err = api.lastError().trimmed();
+			marketStatus->setText(err.isEmpty() ? tr("No recommendations yet.")
+					      : tr("No recommendations yet. %1").arg(err));
+		}
+	}
+
+	const int iconPx = 44;
+	auto trunc = [](const QString &s, int maxChars) -> QString {
+		QString t = s.trimmed();
+		if (maxChars <= 0)
+			return QString();
+		if (t.size() <= maxChars)
+			return t;
+		return t.left(maxChars - 1).trimmed() + QStringLiteral("…");
+	};
+
+	for (const auto &r : items) {
+		const QString title = r.title.trimmed().isEmpty() ? r.slug : r.title.trimmed();
+		const QString desc  = r.shortDescription.trimmed();
+		const QString url   = r.url.trimmed();
+		const QString ico   = r.iconPublicUrl.trimmed();
+		const QString dl    = r.downloadUrl.trimmed();
+
+		auto *rowItem = new QListWidgetItem(marketList);
+		rowItem->setData(Qt::UserRole, url);
+		rowItem->setFlags(rowItem->flags() | Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+
+		// Card widget
+		auto *card = new QFrame(this);
+		card->setObjectName(QStringLiteral("oc_marketCard"));
+		card->setFrameShape(QFrame::NoFrame);
+		card->setStyleSheet(QStringLiteral(
+			"#oc_marketCard {"
+			"  border: 1px solid rgba(255,255,255,0.10);"
+			"  border-radius: 10px;"
+			"  background: rgba(255,255,255,0.03);"
+			"  padding: 8px;"
+			"}"
+			"#oc_marketCard QLabel { background: transparent; }"
+		));
+
+		auto *h = new QHBoxLayout(card);
+		h->setContentsMargins(8, 8, 8, 8);
+		h->setSpacing(10);
+
+		auto *icon = new QLabel(this);
+		icon->setFixedSize(iconPx, iconPx);
+		icon->setAlignment(Qt::AlignCenter);
+		icon->setStyleSheet(QStringLiteral(
+			"border: 1px solid rgba(255,255,255,0.10);"
+			"border-radius: 10px;"
+			"background: rgba(0,0,0,0.10);"
+		));
+		icon->setPixmap(style()->standardIcon(QStyle::SP_FileIcon).pixmap(iconPx - 8, iconPx - 8));
+		h->addWidget(icon);
+
+		// Keep handle for async image updates
+		if (!ico.isEmpty()) {
+			marketIconByUrl.insert(ico, icon);
+			api.requestImage(ico, iconPx);
+		}
+
+		auto *textCol = new QVBoxLayout();
+		textCol->setContentsMargins(0, 0, 0, 0);
+		textCol->setSpacing(2);
+
+		// Keep cards compact: truncate title/description
+		auto *t = new QLabel(trunc(title, 62), this);
+		t->setTextFormat(Qt::PlainText);
+		t->setStyleSheet(QStringLiteral("font-weight: 700;"));
+		// Single-line, keep compact; full title available on hover
+		t->setWordWrap(false);
+		t->setToolTip(title);
+		textCol->addWidget(t);
+
+		if (!desc.isEmpty()) {
+			auto *d = new QLabel(trunc(desc, 110), this);
+			d->setTextFormat(Qt::PlainText);
+			// Single-line, keep compact; full description available on hover
+			d->setWordWrap(false);
+			d->setToolTip(desc);
+			d->setStyleSheet(QStringLiteral("color: rgba(255,255,255,0.85);"));
+			textCol->addWidget(d);
+		}
+
+		h->addLayout(textCol, 1);
+
+		auto *ctaCol = new QVBoxLayout();
+		ctaCol->setContentsMargins(0, 0, 0, 0);
+		ctaCol->setSpacing(6);
+
+		auto *previewBtn = new QPushButton(tr("Preview"), this);
+		previewBtn->setCursor(Qt::PointingHandCursor);
+		previewBtn->setIcon(style()->standardIcon(QStyle::SP_ArrowRight));
+		previewBtn->setToolTip(tr("Open the template page"));
+		ctaCol->addWidget(previewBtn);
+
+		QPushButton *downloadBtn = nullptr;
+		if (!dl.isEmpty()) {
+			downloadBtn = new QPushButton(tr("Download"), this);
+			downloadBtn->setCursor(Qt::PointingHandCursor);
+			downloadBtn->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
+			downloadBtn->setToolTip(tr("Open download link"));
+			ctaCol->addWidget(downloadBtn);
+		}
+
+		ctaCol->addStretch(1);
+		h->addLayout(ctaCol);
+
+		// Wire buttons (capture URLs)
+		connect(previewBtn, &QPushButton::clicked, this, [url]() {
+			if (!url.isEmpty())
+				QDesktopServices::openUrl(QUrl(url));
+		});
+		if (downloadBtn) {
+			connect(downloadBtn, &QPushButton::clicked, this, [dl]() {
+				if (!dl.isEmpty())
+					QDesktopServices::openUrl(QUrl(dl));
+			});
+		}
+
+		// Tooltip on row for accessibility / quick scan
+		QString tip = title;
+		if (!desc.isEmpty())
+			tip += QStringLiteral("\n\n") + desc;
+		if (!dl.isEmpty())
+			tip += QStringLiteral("\n\n") + tr("Download: %1").arg(dl);
+		rowItem->setToolTip(tip);
+
+		// Put the custom widget into the list
+		rowItem->setSizeHint(QSize(0, 96));
+		marketList->addItem(rowItem);
+		marketList->setItemWidget(rowItem, card);
+	}
+}
 
 void LowerThirdSettingsDialog::updateColorButton(QPushButton *btn, const QColor &c)
 {
@@ -1020,6 +1331,8 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 	o["subtitle"] = QString::fromStdString(cfg->subtitle);
 	o["title_size"] = cfg->title_size;
 	o["subtitle_size"] = cfg->subtitle_size;
+	o["avatar_width"] = cfg->avatar_width;
+	o["avatar_height"] = cfg->avatar_height;
 	o["anim_in"] = QString::fromStdString(cfg->anim_in);
 	o["anim_out"] = QString::fromStdString(cfg->anim_out);
 	o["font_family"] = QString::fromStdString(cfg->font_family);
@@ -1144,6 +1457,10 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 	cfg->subtitle_size = obj.value("subtitle_size").toInt(cfg->subtitle_size);
 	cfg->title_size = std::max(6, std::min(200, cfg->title_size));
 	cfg->subtitle_size = std::max(6, std::min(200, cfg->subtitle_size));
+	cfg->avatar_width = obj.value("avatar_width").toInt(cfg->avatar_width);
+	cfg->avatar_height = obj.value("avatar_height").toInt(cfg->avatar_height);
+	cfg->avatar_width = std::max(16, std::min(512, cfg->avatar_width));
+	cfg->avatar_height = std::max(16, std::min(512, cfg->avatar_height));
 	cfg->anim_in = obj.value("anim_in").toString().toStdString();
 	cfg->anim_out = obj.value("anim_out").toString().toStdString();
 	cfg->font_family = obj.value("font_family").toString().toStdString();
