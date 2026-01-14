@@ -103,7 +103,6 @@ static HttpResult winhttp_get(const QUrl &url, const wchar_t *extraHeaders)
         return out;
     }
 
-    // Reasonable timeouts (ms)
     WinHttpSetTimeouts(hRequest, 5000, 5000, 8000, 8000);
 
     BOOL ok = WinHttpSendRequest(
@@ -132,7 +131,6 @@ static HttpResult winhttp_get(const QUrl &url, const wchar_t *extraHeaders)
         return out;
     }
 
-    // Status code
     DWORD statusCode = 0;
     DWORD statusSize = sizeof(statusCode);
     if (WinHttpQueryHeaders(hRequest,
@@ -144,7 +142,6 @@ static HttpResult winhttp_get(const QUrl &url, const wchar_t *extraHeaders)
         out.status = (int)statusCode;
     }
 
-    // Read body
     QByteArray buf;
     for (;;) {
         DWORD avail = 0;
@@ -171,8 +168,6 @@ static HttpResult winhttp_get(const QUrl &url, const wchar_t *extraHeaders)
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
 
-    // Some environments may not report a status code. Only assume success
-    // if we actually received a non-empty body.
     if (out.status == 0 && !out.body.isEmpty())
         out.status = 200;
 
@@ -186,13 +181,10 @@ namespace smart_lt::api {
 
 namespace {
 
-// Public endpoint exposed by your CI4 app
 static constexpr const char *kBaseEndpoint = "https://obscountdown.com/api/resources";
 
-// We intentionally keep the list short for the settings panel.
 static constexpr int kDefaultLimit = 8;
 
-// 1 hour TTL (matches your server cache)
 static constexpr qint64 kCacheTtlSec = 3600;
 
 static QString obs_config_path(const char *file)
@@ -221,12 +213,10 @@ void ApiClient::init()
         return;
     m_inited = true;
 
-    // Needed because we emit QPixmap across threads via QueuedConnection.
     qRegisterMetaType<QPixmap>("QPixmap");
 
     loadCacheFromDisk();
 
-    // If cache is stale, refresh soon (async) without blocking startup.
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     if (!isCacheFresh(now)) {
         QTimer::singleShot(250, this, [this]() { fetchLowerThirds(false); });
@@ -239,18 +229,15 @@ void ApiClient::requestImage(const QString &imageUrl, int targetPx)
     if (u.isEmpty())
         return;
 
-    // Memory cache hit
     if (m_pixCache.contains(u)) {
         emit imageReady(u, m_pixCache.value(u));
         return;
     }
 
-    // Deduplicate in-flight requests
     if (m_imgInFlight.contains(u))
         return;
     m_imgInFlight.insert(u);
 
-    // Disk cache hit
     const QString diskPath = imageCachePathForUrl(u);
     if (!diskPath.isEmpty()) {
         QFile f(diskPath);
@@ -314,7 +301,6 @@ void ApiClient::requestImage(const QString &imageUrl, int targetPx)
             if (!pm.isNull()) {
                 m_pixCache.insert(u, pm);
 
-                // Best-effort disk cache
                 if (!diskPath.isEmpty()) {
                     QDir().mkpath(QFileInfo(diskPath).absolutePath());
                     QFile f(diskPath);
@@ -348,17 +334,12 @@ void ApiClient::fetchLowerThirds(bool force)
 
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     if (!force && isCacheFresh(now) && !m_lowerThirds.isEmpty()) {
-        // Nothing to do.
-        return;
+	    return;
     }
 
     m_fetchInFlight = true;
 
     const QUrl url = buildLowerThirdsUrl();
-
-    // NOTE: QNetworkAccessManager requires OpenSSL deployment on Windows.
-    // OBS plugin builds often omit it, causing "No functional TLS backend".
-    // We therefore use WinHTTP for HTTPS and dispatch back to the UI thread.
 
     std::thread([this, url]() {
         int status = 0;
@@ -426,9 +407,8 @@ bool ApiClient::isCacheFresh(qint64 nowEpochSec) const
 
 QString ApiClient::cacheFilePath() const
 {
-    // Stored alongside your module config.json
-    const QString p = obs_config_path("api-cache.json");
-    return p;
+	const QString p = obs_config_path("api-cache.json");
+	return p;
 }
 
 QString ApiClient::imageCacheDir() const
@@ -507,7 +487,6 @@ QUrl ApiClient::buildLowerThirdsUrl() const
     QUrl url(QString::fromUtf8(kBaseEndpoint));
     QUrlQuery q(url);
 
-    // Your site endpoint: /api/resources?type=lower-thirds-templates&limit=N
     q.addQueryItem(QStringLiteral("type"), QStringLiteral("lower-thirds-templates"));
     q.addQueryItem(QStringLiteral("limit"), QString::number(kDefaultLimit));
 
@@ -528,32 +507,32 @@ void ApiClient::parseAndSet(const QByteArray &rawJson)
     QVector<ResourceItem> out;
     out.reserve(arr.size());
 
-    for (const auto &v : arr) {
-        if (!v.isObject())
-            continue;
-        const QJsonObject o = v.toObject();
+    for (QJsonValue v : arr) {
+	    if (!v.isObject())
+		    continue;
+	    const QJsonObject o = v.toObject();
 
-        ResourceItem it;
-        it.guid = o.value(QStringLiteral("guid")).toString();
-        it.slug = o.value(QStringLiteral("slug")).toString();
-        it.url  = o.value(QStringLiteral("url")).toString();
-        it.title = o.value(QStringLiteral("title")).toString();
-        it.shortDescription = o.value(QStringLiteral("short_description")).toString();
-        it.typeLabel = o.value(QStringLiteral("type_label")).toString();
+	    ResourceItem it;
+	    it.guid = o.value(QStringLiteral("guid")).toString();
+	    it.slug = o.value(QStringLiteral("slug")).toString();
+	    it.url = o.value(QStringLiteral("url")).toString();
+	    it.title = o.value(QStringLiteral("title")).toString();
+	    it.shortDescription = o.value(QStringLiteral("short_description")).toString();
+	    it.typeLabel = o.value(QStringLiteral("type_label")).toString();
 
-        // Optional extras (your API includes these)
-        it.downloadUrl   = o.value(QStringLiteral("download_url")).toString();
-        it.iconPublicUrl = o.value(QStringLiteral("icon_public_url")).toString();
-        it.coverPublicUrl = o.value(QStringLiteral("cover_public_url")).toString();
+	    // Optional extras (your API includes these)
+	    it.downloadUrl = o.value(QStringLiteral("download_url")).toString();
+	    it.iconPublicUrl = o.value(QStringLiteral("icon_public_url")).toString();
+	    it.coverPublicUrl = o.value(QStringLiteral("cover_public_url")).toString();
 
-        if (it.title.trimmed().isEmpty())
-            continue;
+	    if (it.title.trimmed().isEmpty())
+		    continue;
 
-        if (it.url.trimmed().isEmpty() && !it.slug.trimmed().isEmpty()) {
-            it.url = QStringLiteral("https://obscountdown.com/r/") + it.slug;
-        }
+	    if (it.url.trimmed().isEmpty() && !it.slug.trimmed().isEmpty()) {
+		    it.url = QStringLiteral("https://obscountdown.com/r/") + it.slug;
+	    }
 
-        out.push_back(it);
+	    out.push_back(it);
     }
 
     m_lowerThirds = out;
