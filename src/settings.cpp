@@ -64,13 +64,15 @@
 namespace smart_lt::ui {
 
 static bool unzip_to_dir(const QString &zipPath, const QString &destDir, QString &htmlPath, QString &cssPath,
-			 QString &jsPath, QString &jsonPath, QString &profilePath)
+			 QString &jsPath, QString &jsonPath, QString &profilePath, QString &soundInPath, QString &soundOutPath)
 {
 	htmlPath.clear();
 	cssPath.clear();
 	jsPath.clear();
 	jsonPath.clear();
 	profilePath.clear();
+	soundInPath.clear();
+	soundOutPath.clear();
 
 	unzFile zip = unzOpen(zipPath.toUtf8().constData());
 	if (!zip)
@@ -124,6 +126,10 @@ static bool unzip_to_dir(const QString &zipPath, const QString &destDir, QString
 			jsonPath = outPath;
 		else if (name.startsWith("profile.") || name.contains("profile", Qt::CaseInsensitive))
 			profilePath = outPath;
+		else if (name.startsWith("soundIn.", Qt::CaseInsensitive) || name.contains("soundin", Qt::CaseInsensitive))
+			soundInPath = outPath;
+		else if (name.startsWith("soundOut.", Qt::CaseInsensitive) || name.contains("soundout", Qt::CaseInsensitive))
+			soundOutPath = outPath;
 
 	} while (unzGoToNextFile(zip) == UNZ_OK);
 
@@ -1654,6 +1660,25 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 	o["avatar_height"] = cfg->avatar_height;
 	o["anim_in"] = QString::fromStdString(cfg->anim_in);
 	o["anim_out"] = QString::fromStdString(cfg->anim_out);
+	// Optional sound cues (exported into ZIP as soundIn.<ext> / soundOut.<ext>)
+	// Store ZIP-internal cue names for template portability
+	{
+		QString sin, sout;
+		if (smart_lt::has_output_dir() && !cfg->anim_in_sound.empty()) {
+			const QString p = QDir(QString::fromStdString(smart_lt::output_dir()))
+						  .filePath(QString::fromStdString(cfg->anim_in_sound));
+			const QString ext = QFileInfo(p).suffix().toLower();
+			sin = ext.isEmpty() ? "soundIn" : QString("soundIn.%1").arg(ext);
+		}
+		if (smart_lt::has_output_dir() && !cfg->anim_out_sound.empty()) {
+			const QString p = QDir(QString::fromStdString(smart_lt::output_dir()))
+						  .filePath(QString::fromStdString(cfg->anim_out_sound));
+			const QString ext = QFileInfo(p).suffix().toLower();
+			sout = ext.isEmpty() ? "soundOut" : QString("soundOut.%1").arg(ext);
+		}
+		o["sound_in"] = sin;
+		o["sound_out"] = sout;
+	}
 	o["font_family"] = QString::fromStdString(cfg->font_family);
 	o["lt_position"] = QString::fromStdString(cfg->lt_position);
 	o["bg_color"] = QString::fromStdString(cfg->bg_color);
@@ -1684,6 +1709,34 @@ void LowerThirdSettingsDialog::onExportTemplateClicked()
 			const QString internal = ext.isEmpty() ? "profile" : QString("profile.%1").arg(ext);
 			ok = ok && zip_write_file(zf, internal.toUtf8().constData(), picData);
 		}
+	}
+
+	
+	if (ok && smart_lt::has_output_dir()) {
+		const QString outDir = QString::fromStdString(smart_lt::output_dir());
+		QDir dir(outDir);
+
+		auto writeSound = [&](const std::string &fname, const char *zipBase) {
+			if (fname.empty())
+				return;
+
+			const QString p = dir.filePath(QString::fromStdString(fname));
+			QFile f(p);
+			if (!f.open(QIODevice::ReadOnly))
+				return;
+
+			const QByteArray data = f.readAll();
+			f.close();
+
+			const QString ext = QFileInfo(p).suffix().toLower();
+			const QString internal = ext.isEmpty() ? QString("%1").arg(zipBase)
+							      : QString("%1.%2").arg(zipBase).arg(ext);
+			ok = ok && zip_write_file(zf, internal.toUtf8().constData(), data);
+		};
+
+		// Export as: soundIn.<ext> / soundOut.<ext>
+		writeSound(cfg->anim_in_sound, "soundIn");
+		writeSound(cfg->anim_out_sound, "soundOut");
 	}
 
 	zipClose(zf, nullptr);
@@ -1810,8 +1863,8 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 		return;
 	}
 
-	QString htmlPath, cssPath, jsPath, jsonPath, profilePicPath;
-	if (!unzip_to_dir(zipPath, tempDir.path(), htmlPath, cssPath, jsPath, jsonPath, profilePicPath)) {
+	QString htmlPath, cssPath, jsPath, jsonPath, profilePicPath, soundInFilePath, soundOutFilePath;
+	if (!unzip_to_dir(zipPath, tempDir.path(), htmlPath, cssPath, jsPath, jsonPath, profilePicPath, soundInFilePath, soundOutFilePath)) {
 		QMessageBox::warning(this, tr("Error"),
 				     tr("ZIP must contain template.html, template.css and template.json."));
 		return;
@@ -1848,6 +1901,19 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 	cfg->avatar_height = std::max(16, std::min(512, cfg->avatar_height));
 	cfg->anim_in = obj.value("anim_in").toString().toStdString();
 	cfg->anim_out = obj.value("anim_out").toString().toStdString();
+	// Sound cue metadata (files are imported from ZIP entries)
+	{
+		const QString sin = obj.value("sound_in").toString();
+		const QString sout = obj.value("sound_out").toString();
+		const QString legacyIn = obj.value("anim_in_sound").toString();
+		const QString legacyOut = obj.value("anim_out_sound").toString();
+		// If JSON indicates sounds but ZIP didn't include them, we still rely on extracted files.
+		Q_UNUSED(sin);
+		Q_UNUSED(sout);
+		Q_UNUSED(legacyIn);
+		Q_UNUSED(legacyOut);
+	}
+
 	cfg->font_family = obj.value("font_family").toString().toStdString();
 	cfg->lt_position = obj.value("lt_position").toString().toStdString();
 	cfg->bg_color = obj.value("bg_color").toString().toStdString();
@@ -1907,7 +1973,44 @@ void LowerThirdSettingsDialog::onImportTemplateClicked()
 			if (QFile::copy(profilePicPath, dest)) {
 				cfg->profile_picture = newName.toStdString();
 			}
+		
+	// Import Animation IN/OUT sound cues (optional)
+	if (smart_lt::has_output_dir()) {
+		const QString outDir = QString::fromStdString(smart_lt::output_dir());
+		if (!outDir.isEmpty()) {
+			QDir dir(outDir);
+
+			auto importSound = [&](const QString &srcPath, bool isIn) {
+				if (srcPath.isEmpty())
+					return;
+
+				// Remove existing bound sound file, if any
+				std::string &field = isIn ? cfg->anim_in_sound : cfg->anim_out_sound;
+				if (!field.empty()) {
+					const QString oldPath = dir.filePath(QString::fromStdString(field));
+					if (QFile::exists(oldPath))
+						QFile::remove(oldPath);
+					field.clear();
+				}
+
+				const QString ext = QFileInfo(srcPath).suffix().toLower();
+				const QString base = isIn ? "soundIn" : "soundOut";
+				const QString newName = ext.isEmpty()
+							 ? QString("%1_%2").arg(QString::fromStdString(cfg->id)).arg(base)
+							 : QString("%1_%2.%3").arg(QString::fromStdString(cfg->id)).arg(base).arg(ext);
+
+				const QString dest = dir.filePath(newName);
+				QFile::remove(dest);
+				if (QFile::copy(srcPath, dest)) {
+					field = newName.toStdString();
+				}
+			};
+
+			importSound(soundInFilePath, true);
+			importSound(soundOutFilePath, false);
 		}
+	}
+}
 	}
 
 	smart_lt::save_state_json();
